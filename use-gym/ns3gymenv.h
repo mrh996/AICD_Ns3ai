@@ -49,12 +49,21 @@ public:
     // Notify for new stats and retrieve action(s) from the Gym Env (Python)
     uint32_t NotifyGetAction();
     // Send flow stats to the Gym Env (Python)
-    void SetStats(uint32_t rxPackets);
+    //rxPackets: The number of packets received by the node.
+    //txPackets: The number of packets transmitted by the node.
+    //avgPacketSize: The average size of the packets transmitted, calculated as the total transmitted bytes divided by the number of transmitted packets.
+    void SetStats(uint32_t rxPackets, uint32_t txPackets, double avgPacketSize, uint32_t nodeConnections);
 
 private:
-    // Variable(s) to store the flow stats
-    uint32_t m_rxPackets;
     // Variable(s) to receive the action(s) from the Gym Env
+    uint32_t m_rxAction;
+    bool m_attackSuccess;
+    float m_cumulativeReward; // New variable to track cumulative reward
+// Variable(s) to store the flow stats
+    uint32_t m_rxPackets; // The number of packets received by the node.
+    uint32_t m_txPackets; // txPackets: The number of packets transmitted by the node.
+    double m_avgPacketSize; // avgPacketSize: The average size of the packets transmitted, calculated as the total transmitted bytes divided by the number of transmitted packets.
+    uint32_t m_nodeConnections; // current node connections the action(s) from the Gym Env
     uint32_t m_rxAction;
 
 };
