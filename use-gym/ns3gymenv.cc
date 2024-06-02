@@ -38,6 +38,8 @@ Ns3GymEnv::Ns3GymEnv ()
     SetOpenGymInterface(OpenGymInterface::Get());
     m_rxPackets = 0;
     m_rxAction = 0;
+    m_attackSuccess = false;
+    m_cumulativeReward = 0.0; // Initialize cumulative reward
 }
 
 Ns3GymEnv::~Ns3GymEnv ()
@@ -65,33 +67,24 @@ Ptr<OpenGymSpace>
 Ns3GymEnv::GetActionSpace()
 {
     // m_rxAction
-    uint32_t parameterNum = 1;
-    float low = 0.0;
-    float high = 10000.0;
-    std::vector<uint32_t> shape = {
-        parameterNum,
-    };
-    std::string dtype = TypeNameGet<uint32_t>();
-
-    Ptr<OpenGymBoxSpace> box = CreateObject<OpenGymBoxSpace>(low, high, shape, dtype);
-    NS_LOG_INFO("Ns3GetActionSpace: " << box);
-    return box;
+    uint32_t n = 2; // Number of possible actions (0, 1, 2)
+    Ptr<OpenGymDiscreteSpace> discrete = CreateObject<OpenGymDiscreteSpace>(n);
+    NS_LOG_INFO("Ns3GetActionSpace: " << discrete);
+    return discrete;
 }
-
 /*
 Callback to define observation space
 */
 Ptr<OpenGymSpace>
 Ns3GymEnv::GetObservationSpace()
 {
-    // m_rxPackets
-    uint32_t parameterNum = 1;
+    uint32_t parameterNum = 4; // Update the number of parameters
     float low = 0.0;
     float high = 10000.0;
     std::vector<uint32_t> shape = {
         parameterNum,
     };
-    std::string dtype = TypeNameGet<uint64_t>();
+    std::string dtype = TypeNameGet<float>();
 
     Ptr<OpenGymBoxSpace> box = CreateObject<OpenGymBoxSpace>(low, high, shape, dtype);
     NS_LOG_INFO("Ns3GetObservationSpace: " << box);
@@ -105,10 +98,18 @@ bool
 Ns3GymEnv::GetGameOver()
 {
     NS_LOG_FUNCTION (this);
-    // Setting this to false will let the simulation run until it finishes
-    // A condition can be implemented to terminate the NS3 simulation from the Gym env by setting this to true
-    bool isGameOver = false;
-    NS_LOG_UNCOND ("Ns3GetGameOver: " << isGameOver);
+
+    // Set the game over condition based on cumulative reward
+    bool isGameOver = (m_cumulativeReward >= 20);
+
+    if (isGameOver)
+    {
+        // Optionally, reset m_attackSuccess and m_cumulativeReward here for the next episode
+        m_attackSuccess = false;
+        m_cumulativeReward = 0.0; // Reset cumulative reward for the next episode
+    }
+
+    NS_LOG_UNCOND("Ns3GetGameOver: " << isGameOver);
     return isGameOver;
 }
 
@@ -118,17 +119,17 @@ Callback to collect observations
 Ptr<OpenGymDataContainer>
 Ns3GymEnv::GetObservation()
 {
-    NS_LOG_FUNCTION (this);
-    // m_rxPackets
-    uint32_t parameterNum = 1;
-    std::vector<uint32_t> shape = {
-        parameterNum,
-    };
-    Ptr<OpenGymBoxContainer<uint64_t>> box = CreateObject<OpenGymBoxContainer<uint64_t>>(shape);
+    NS_LOG_FUNCTION(this);
+    uint32_t parameterNum = 4; // Update the number of parameters
+    std::vector<uint32_t> shape = { parameterNum };
+    Ptr<OpenGymBoxContainer<float>> box = CreateObject<OpenGymBoxContainer<float>>(shape);
 
-    box->AddValue(m_rxPackets);
+    box->AddValue(static_cast<float>(m_rxPackets));
+    box->AddValue(static_cast<float>(m_txPackets));
+    box->AddValue(static_cast<float>(m_avgPacketSize));
+    box->AddValue(static_cast<float>(m_nodeConnections)); // Add the new observation
 
-    NS_LOG_UNCOND ("Ns3GetObservation: " << box);
+    NS_LOG_UNCOND("Ns3GetObservation: " << box);
     return box;
 }
 
@@ -139,14 +140,14 @@ float
 Ns3GymEnv::GetReward()
 {
     NS_LOG_FUNCTION (this);
-    float reward = 1.0;
-
-    if (m_rxPackets == 0)
-        reward = 0.0;
-    else
-        reward = 1.0;
-
-    NS_LOG_UNCOND ("Ns3GetReward: " << reward);
+    float reward = 0.0;
+    if (m_attackSuccess) {
+        reward = 10.0; // Reward for successful attack
+    } else {
+        reward = -1.0; // Penalty for unsuccessful attempts
+    }
+    m_cumulativeReward += reward; // Update cumulative reward
+    NS_LOG_UNCOND("GetReward: " << reward << ", CumulativeReward: " << m_cumulativeReward);
     return reward;
 }
 
@@ -169,24 +170,36 @@ bool
 Ns3GymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 {
     // Unpack the actions from the Gym Env (Python)
-    Ptr<OpenGymBoxContainer<uint32_t>> box = DynamicCast<OpenGymBoxContainer<uint32_t>>(action);
-    m_rxAction = box->GetValue(0);
+    //Ptr<OpenGymBoxContainer<uint32_t>> box = DynamicCast<OpenGymBoxContainer<uint32_t>>(action);
+    Ptr<OpenGymDiscreteContainer> discrete = DynamicCast<OpenGymDiscreteContainer>(action);
+    //uint32_t attackType = box->GetValue(0);
+    uint32_t attackType = discrete->GetValue();
+    m_rxAction = attackType;
 
-    NS_LOG_INFO("Ns3ExecuteActions: " << action);
+    if (attackType == 1) {
+        // Set flag to true indicating that an attack was initiated
+        NS_LOG_INFO("Attack sucess: " << attackType);
+        m_attackSuccess = true;
+    } else {
+        m_attackSuccess = false;
+    }
+    NS_LOG_INFO("ExecuteActions: " << attackType);
     return true;
 }
 
-// Setter and getter functions to exhange data with the Gym env
+// Setter and getter functions to exchange data with the Gym env
 
 /*
 Generate flow stats
 */
 void
-Ns3GymEnv::SetStats(uint32_t rxPackets)
+Ns3GymEnv::SetStats(uint32_t rxPackets, uint32_t txPackets, double avgPacketSize, uint32_t nodeConnections)
 {
     m_rxPackets = rxPackets;
+    m_txPackets = txPackets;
+    m_avgPacketSize = avgPacketSize;
+    m_nodeConnections = nodeConnections; // Set the new observation
 }
-
 /*
 Notify for new flow stats and retrieve action(s)
 */
