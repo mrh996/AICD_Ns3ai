@@ -45,6 +45,10 @@ $ ./ns3 configure --enable-python-bindings -- -DPython3_LIBRARY_DIRS=/LOCAL2/mur
 
 $ ./ns3 build ns3ai_ddos_gym
 
+or
+
+$ ./ns3 build ns3ai_ddos_v2_gym
+
 Run the simulation:
 
 $ cd contrib/ai/examples/DDoSim/use-gym/
