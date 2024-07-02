@@ -53,6 +53,10 @@ Run the simulation:
 
 $ cd contrib/ai/examples/DDoSim/use-gym/
 
+or
+
+$ cd contrib/ai/examples/DDoSim_v2/use-gym/
+
 ## Train a RL agent to form DDoS attack
 
 python run_ddos_rl_attack.py
