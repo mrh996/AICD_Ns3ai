@@ -16,6 +16,8 @@ $ cd ~/ns-allinone-3.41/ns-3.41/
 
 $ git clone https://github.com/hust-diangroup/ns3-ai.git contrib/ai
 
+$  replace the file in model/gym-interface/py/ns3ai_gym_env/envs/ns3_environment.py with the ns3_environment.py here
+
 $ ./ns3 configure --enable-examples
 
 $ ./ns3 build ai
