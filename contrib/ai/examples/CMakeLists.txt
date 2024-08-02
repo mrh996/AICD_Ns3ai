@@ -1,2 +1,2 @@
-add_subdirectory(DDoSim)
-add_subdirectory(DDoSim_v2)
+add_subdirectory(DDoS)
+add_subdirectory(DDoS_v2)
