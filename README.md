@@ -34,13 +34,16 @@ $ cd contrib/ai/examples/
 
 $ wget https://www.dropbox.com/scl/fi/zv5ib8up3lmr2atjsv2sy/crocs_ns3_project.zip?rlkey=3r0iefy0n76emjfu0ozifzfql&st=k7xrz9wn&dl=0 -O crocs_ns3_project.zip
 
+
 $ unzip crocs_ns3_project.zip
 
  When asked, click ‘y’ to replace the CMakeLists.txt file
 
+## Or add the examples in current github project.
+
 $ cd ../../../
 
-$ PYTHONCONDAVER=$(ls /home/crocs/anaconda3/envs/ns3ai_env/include | grep python)
+$ PYTHONCONDAVER=$(ls /home/crocs/anaconda3/envs/ns3ai_env/include | grep python)  ( Get your environment's python version python --version)
 
 $ ./ns3 configure --enable-python-bindings -- -DPython3_LIBRARY_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/lib -DPython3_INCLUDE_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/include/python3.10.14
 
