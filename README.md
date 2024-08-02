@@ -39,7 +39,7 @@ $ unzip crocs_ns3_project.zip
 
  When asked, click ‘y’ to replace the CMakeLists.txt file
 
-## Or add the examples in current github project.
+ Or add the examples in current github project.
 
 $ cd ../../../
 
