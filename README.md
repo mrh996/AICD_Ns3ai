@@ -45,7 +45,7 @@ $ cd ../../../
 
 $ PYTHONCONDAVER=$(ls /home/crocs/anaconda3/envs/ns3ai_env/include | grep python)  ( Get your environment's python version python --version)
 
-$ ./ns3 configure --enable-python-bindings -- -DPython3_LIBRARY_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/lib -DPython3_INCLUDE_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/include/python3.10.14
+$ ./ns3 configure --enable-python-bindings -- -DPython3_LIBRARY_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/lib -DPython3_INCLUDE_DIRS=/LOCAL2/mur/.conda/envs/ns3ai_env/include/python3.10.14 ( Replace your python version here, mine is 3.10.14)
 
 
 $ ./ns3 build ns3ai_ddos_gym
