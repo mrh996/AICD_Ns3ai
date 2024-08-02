@@ -32,14 +32,9 @@ $ ./ns3 build ns3ai_apb_gym ns3ai_apb_msg_stru ns3ai_apb_msg_vec ns3ai_multibss 
 
 $ cd contrib/ai/examples/
 
-$ wget https://www.dropbox.com/scl/fi/zv5ib8up3lmr2atjsv2sy/crocs_ns3_project.zip?rlkey=3r0iefy0n76emjfu0ozifzfql&st=k7xrz9wn&dl=0 -O crocs_ns3_project.zip
-
-
-$ unzip crocs_ns3_project.zip
-
- When asked, click ‘y’ to replace the CMakeLists.txt file
-
- Or add the examples in current github project.
+add the examples in current github project.
+ 
+ replace the CMakeLists.txt file
 
 $ cd ../../../
 
