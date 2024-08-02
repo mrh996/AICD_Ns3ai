@@ -56,11 +56,11 @@ $ ./ns3 build ns3ai_ddos_v2_gym
 
 Run the simulation:
 
-$ cd contrib/ai/examples/DDoSim/use-gym/
+$ cd contrib/ai/examples/DDoS/use-gym/
 
 or
 
-$ cd contrib/ai/examples/DDoSim_v2/use-gym/
+$ cd contrib/ai/examples/DDoS_v2/use-gym/
 
 ## Train a RL agent to form DDoS attack
 
