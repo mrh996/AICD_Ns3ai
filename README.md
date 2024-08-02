@@ -65,6 +65,8 @@ $ cd contrib/ai/examples/DDoS_v2/use-gym/
 ## Train a RL agent to form DDoS attack
 
 python run_ddos_rl_attack.py
+or
+run_ddosim.py
 
 
 
