@@ -64,7 +64,6 @@ private:
     uint32_t m_txPackets; // txPackets: The number of packets transmitted by the node.
     double m_avgPacketSize; // avgPacketSize: The average size of the packets transmitted, calculated as the total transmitted bytes divided by the number of transmitted packets.
     uint32_t m_nodeConnections; // current node connections the action(s) from the Gym Env
-    uint32_t m_rxAction;
 
 };
 
