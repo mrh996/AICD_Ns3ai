@@ -35,7 +35,10 @@ $ python run_ddosim.py
 Please note that the above flow stats (features) are collected per node (node_id >= 0) or per flow (node_id == -1).
 
 
-The flow stats per node can be used to create a graph of the network. It is important to note that a flow has a unique ID (starting from 1) and it is formed by using the following information:
+The flow stats per node are stored in the victim_nodes_logs dictionary and can be used to create a graph of the network. Meanwhile, the overall flow stats are stored in the victim_flow_stats dictionary and can be used to provide a more high-level overview of the victim network status. 
+
+
+It is important to note that a flow has a unique ID (starting from 1), and it is formed by using the following information:
  - Source IPv4 address
  - Destination IPv4 address
  - Source port of the transport protocol (TCP or UDP)
