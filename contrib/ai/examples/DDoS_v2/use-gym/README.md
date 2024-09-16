@@ -32,7 +32,7 @@ $ python run_ddosim.py
     average_rx_packet_size      # 27 - Average received packet size (B)
 
 
-Please note that the above flow stats (features) are collected per node (node_id present) or per flow (node_id == -1).
+Please note that the above flow stats (features) are collected per node (node_id >= 0) or per flow (node_id == -1).
 
 
 The flow stats per node can be used to create a graph of the network. It is important to note that a flow has a unique ID (starting from 1) and it is formed by using the following information:
