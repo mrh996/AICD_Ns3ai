@@ -44,7 +44,7 @@ The flow stats per node can be used to create a graph of the network. It is impo
  
 
 For example:
-Flow ID 1 (192.168.0.1 - 192.168.3.1 - 45500 - 80 - 6)
-Flow ID 2 (192.168.3.1 - 192.168.0.1 - 80 - 45500 - 6)
+ - Flow ID 1 (192.168.0.1 - 192.168.3.1 - 45500 - 80 - 6)
+ - Flow ID 2 (192.168.3.1 - 192.168.0.1 - 80 - 45500 - 6)
 
 
