@@ -18,7 +18,6 @@
  * Author: Piotr Gawlowicz <gawlowicz@tkn.tu-berlin.de>
  *
  * Modify: Valerio Selis <v.selis@liverpool.ac.uk>
- * Modify: Ronghui Mu <ronghui.mu@liverpool.ac.uk>
  *
  */
 
@@ -37,37 +36,33 @@ Ns3GymEnv::Ns3GymEnv ()
 {
     NS_LOG_FUNCTION (this);
     SetOpenGymInterface(OpenGymInterface::Get());
-    
-    m_simTime = 0.0;               // 1 - Simulation time (elapsed seconds)
-    m_srcAddr = 0;                 // 2 - Source IPv4 address
-    m_dstAddr = 0;                 // 3 - Destination IPv4 address
-    m_srcPort = 0;                 // 4 - Source port
-    m_dstPort= 0;                  // 5 - Destination port
-    m_proto = 0;                   // 6 - Protocol
-    m_flowDuration = 0.0;          // 7 - Flow duration (Last Tx - First Rx)
-    m_txPkts = 0;                  // 8 - Sent packets
-    m_rxPkts = 0;                  // 9 - Received packets
-    m_txBytes = 0;                 // 10 - Sent bytes
-    m_rxBytes = 0;                 // 11 - Received bytes
-    m_lostPkts = 0;                // 12 - Lost packets
-    m_throughput = 0.0;            // 13 - Throughput (Mbps)
-    m_totalTxPkts = 0;             // 14 - Total sent packets
-    m_totalRxPkts = 0;             // 15 - Total received packets
-    m_totalTxBytes = 0;            // 16 - Total sent bytes
-    m_totalRxBytes = 0;            // 17 - Total received bytes
-    m_totalFlowDuration = 0.0;     // 18 - Total flow duration
-    m_totalThroughput = 0.0;       // 19 - Total throughput (Mbps)
-    m_totalDelay = 0.0;            // 20 - Total delay (s)
-    m_totalJitter = 0.0;           // 21 - Total jitter (s)
-    m_totalLostPkts = 0;           // 22 - Total packets lost
-    m_pdr = 0.0;                   // 23 - Packet Delivery Ratio
-    m_plr = 0.0;                   // 24 - Packet Loss Ratio
-    m_averageTxPacketSize = 0.0;   // 25 - Average transmitted packet size
-    m_averageRxPacketSize = 0.0;   // 26 - Average received packet size
-    m_averageThroughput = 0.0;     // 27 - Average Throughput (Mbps)
-    m_averageDelay = 0.0;          // 28 - Average End to End delay (s)
-    m_averageJitter = 0.0;         // 29 - Average jitter Jitter (s)
-    m_activeFlows = 0;             // 30 - Active nodes/flows
+    m_nodeId = 0;
+    m_flowId = 0;
+    m_simTime = 0;               // Simulation time (elapsed seconds)
+    m_srcAddr = 0;             // Source IPv4 address
+    m_dstAddr = 0;             // Destination IPv4 address
+    m_srcPort = 0;             // Source port
+    m_dstPort = 0;             // Destination port
+    m_proto = 0;                // Protocol
+    m_timeFirstTxPacket = 0;
+    m_timeLastTxPacket = 0;
+    m_timeFirstRxPacket = 0;
+    m_timeLastRxPacket = 0;
+    m_txBytes = 0;               // Sent bytes
+    m_rxBytes = 0;               // Received bytes
+    m_txPkts = 0;                // Sent packets
+    m_rxPkts = 0;                // Received packets
+    m_forwardedPackets = 0;
+    m_droppedPackets = 0;
+    m_delaySum = 0;
+    m_jitterSum = 0;
+    m_lastDelay = 0;
+    m_throughput = 0;            // Throughput (Mbps)
+    m_flowDuration = 0;          // Flow duration (Last Tx - First Rx)
+    m_pdr = 0;                   // Packet Delivery Ratio
+    m_plr = 0;                   // Packet Loss Ratio
+    m_averageTxPacketSize = 0;   // Average transmitted packet size
+    m_averageRxPacketSize = 0;   // Average received packet size
 
     m_rxAction = 0;
     m_attackSuccess = false;
@@ -111,9 +106,9 @@ Callback to define observation space
 Ptr<OpenGymSpace>
 Ns3GymEnv::GetObservationSpace()
 {
-    uint32_t parameterNum = 30; // Update the number of parameters
-    float low = 0.0;            // Minimum value for an item in the box
-    float high = 1000000000.0;  // Maximum value for an item in the box
+    uint32_t parameterNum = 27; // Update the number of parameters
+    float low = -1.0;            // Minimum value in the box
+    float high = 1000000000.0;  // Maximum value in the box
     std::vector<uint32_t> shape = {
         parameterNum,
     };
@@ -133,7 +128,7 @@ Ns3GymEnv::GetGameOver()
     NS_LOG_FUNCTION (this);
 
     // Set the game over condition based on cumulative reward
-    bool isGameOver = (m_cumulativeReward >= 20);
+    bool isGameOver = (m_cumulativeReward >= 20000);
 
     if (isGameOver)
     {
@@ -153,43 +148,41 @@ Ptr<OpenGymDataContainer>
 Ns3GymEnv::GetObservation()
 {
     NS_LOG_FUNCTION (this);
-    // m_rxPackets
-    uint32_t parameterNum = 30;
+    uint32_t parameterNum = 27;
     std::vector<uint32_t> shape = {
         parameterNum,
     };
     Ptr<OpenGymBoxContainer<double>> box = CreateObject<OpenGymBoxContainer<double>>(shape);
 
-    box->AddValue(m_simTime);               // Simulation time (elapsed seconds)
-    box->AddValue(m_srcAddr);               // Source IPv4 address
-    box->AddValue(m_dstAddr);               // Destination IPv4 address
-    box->AddValue(m_srcPort);               // Source port
-    box->AddValue(m_dstPort);               // Destination port
-    box->AddValue(m_proto);                 // Protocol
-    box->AddValue(m_flowDuration);          // Flow duration (Last Tx - First Rx)
-    box->AddValue(m_txPkts);                // Sent packets
-    box->AddValue(m_rxPkts);                // Received packets
-    box->AddValue(m_txBytes);               // Sent bytes
-    box->AddValue(m_rxBytes);               // Received bytes
-    box->AddValue(m_lostPkts);              // Lost packets
-    box->AddValue(m_throughput);            // Throughput (Mbps)
-    box->AddValue(m_totalTxPkts);           // Total sent packets
-    box->AddValue(m_totalRxPkts);           // Total received packets
-    box->AddValue(m_totalTxBytes);          // Total sent bytes
-    box->AddValue(m_totalRxBytes);          // Total received bytes
-    box->AddValue(m_totalFlowDuration);     // Total flow duration
-    box->AddValue(m_totalThroughput);       // Total throughput (Mbps)
-    box->AddValue(m_totalDelay);            // Total delay (s)
-    box->AddValue(m_totalJitter);           // Total jitter (s)
-    box->AddValue(m_totalLostPkts);         // Total packets lost
-    box->AddValue(m_pdr);                   // Packet Delivery Ratio
-    box->AddValue(m_plr);                   // Packet Loss Ratio
-    box->AddValue(m_averageTxPacketSize);   // Average transmitted packet size
-    box->AddValue(m_averageRxPacketSize);   // Average received packet size
-    box->AddValue(m_averageThroughput);     // Average Throughput (Mbps)
-    box->AddValue(m_averageDelay);          // Average End to End delay (s)
-    box->AddValue(m_averageJitter);         // Average jitter Jitter (s)
-    box->AddValue(m_activeFlows);           // Active nodes/flows
+    std::cout << "GetObs nodeId " << m_nodeId << std::endl;
+
+    box->AddValue(m_nodeId);                // 1 - Node ID (number if info from a node, -1 if overall info of a flow)
+    box->AddValue(m_flowId);                // 2 - Flow ID
+    box->AddValue(m_simTime);               // 3 - Simulation time (elapsed seconds)
+    box->AddValue(m_srcAddr);               // 4 - Source IPv4 address
+    box->AddValue(m_dstAddr);               // 5 - Destination IPv4 address
+    box->AddValue(m_srcPort);               // 6 - Source port
+    box->AddValue(m_dstPort);               // 7 - Destination port
+    box->AddValue(m_proto);                 // 8 - Protocol
+    box->AddValue(m_timeFirstTxPacket);     // 9 - Time of the first TX packet (s)
+    box->AddValue(m_timeLastTxPacket);      // 10 - Time of the last TX packet (s)
+    box->AddValue(m_timeFirstRxPacket);     // 11 - Time of the first RX packet (s)
+    box->AddValue(m_timeLastRxPacket);      // 12 - Time of the last RX packet (s)
+    box->AddValue(m_txBytes);               // 13 - Sent bytes
+    box->AddValue(m_rxBytes);               // 14 - Received bytes
+    box->AddValue(m_txPkts);                // 15 - Sent packets
+    box->AddValue(m_rxPkts);                // 16 - Received packets
+    box->AddValue(m_forwardedPackets);      // 17 - Number of forwarded packets
+    box->AddValue(m_droppedPackets);        // 18 - Number of forwarded packets
+    box->AddValue(m_delaySum);              // 19 - Total delay (s)
+    box->AddValue(m_jitterSum);             // 20 - Total jitter (s)
+    box->AddValue(m_lastDelay);             // 21 - Last delay value (s)
+    box->AddValue(m_throughput);            // 22 - Throughput (Mbps)
+    box->AddValue(m_flowDuration);          // 23 - Flow duration (Last Tx - First Rx)
+    box->AddValue(m_pdr);                   // 24 - Packet Delivery Ratio
+    box->AddValue(m_plr);                   // 25 - Packet Loss Ratio
+    box->AddValue(m_averageTxPacketSize);   // 26 - Average transmitted packet size (B)
+    box->AddValue(m_averageRxPacketSize);   // 27 - Average received packet size (B)
     
     NS_LOG_UNCOND ("Ns3GetObservation: " << box);
     return box;
@@ -204,7 +197,7 @@ Ns3GymEnv::GetReward()
     NS_LOG_FUNCTION (this);
     float reward = 0.0;
     if (m_attackSuccess) {
-        reward = 10.0; // Reward for successful attack
+        reward = 1.0;  // Reward for successful attack
     } else {
         reward = -1.0; // Penalty for unsuccessful attempts
     }
@@ -255,59 +248,122 @@ Ns3GymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 Generate flow stats
 */
 void
-Ns3GymEnv::SetStats(std::string flowId, double simTime, uint32_t srcAddr, uint32_t dstAddr, uint16_t srcPort,
-                    uint16_t dstPort, uint8_t proto, double flowDuration, double txPkts, double rxPkts,
-                    double txBytes, double rxBytes, double lostPkts, double throughput,
-                    std::unordered_map<std::string, std::vector<double>> flowsDict,
-                    double totalTxPkts, double totalRxPkts, double totalThroughput, double totalDelay,
-                    double totalJitter, double totalLostPkts, double pdr, double plr,
-                    double averageTxPacketSize, double averageRxPacketSize,
-                    double averageThroughput, double averageDelay, double averageJitter, uint32_t activeFlows)
+Ns3GymEnv::SetStats(int nodeId, int flowId, FeaturesMap& featuresMap)
 {
-    m_simTime = simTime;                            // 1 - Simulation time (elapsed seconds)
-    m_srcAddr = srcAddr;                            // 2 - Source IPv4 address
-    m_dstAddr = dstAddr;                            // 3 - Destination IPv4 address
-    m_srcPort = srcPort;                            // 4 - Source port
-    m_dstPort = dstPort;                            // 5 - Destination port
-    m_proto = proto;                                // 6 - Protocol
-    m_flowDuration = flowDuration;                  // 7 - Flow duration (Last Tx - First Rx)
-    m_txPkts = txPkts;                              // 8 - Sent packets
-    m_rxPkts = rxPkts;                              // 9 - Received packets
-    m_txBytes = txBytes;                            // 10 - Sent bytes
-    m_rxBytes = rxBytes;                            // 11 - Received bytes
-    m_lostPkts = lostPkts;                          // 12 - Lost packets
-    m_throughput = throughput;                      // 13 - Throughput (Mbps)
-    m_totalTxPkts = flowsDict[flowId][0];           // 14 - Total sent packets
-    m_totalRxPkts = flowsDict[flowId][1];           // 15 - Total received packets
-    m_totalTxBytes = flowsDict[flowId][2];          // 16 - Total sent bytes
-    m_totalRxBytes = flowsDict[flowId][3];          // 17 - Total received bytes
-    m_totalFlowDuration = flowsDict[flowId][4];     // 18 - Total flow duration
-    m_totalThroughput = flowsDict[flowId][5];       // 19 - Total throughput (Mbps)
-    m_totalDelay = flowsDict[flowId][6];            // 20 - Total delay (s)
-    m_totalJitter = flowsDict[flowId][7];           // 21 - Total jitter (s)
-    m_totalLostPkts = flowsDict[flowId][8];         // 22 - Total packets lost
-    m_pdr = flowsDict[flowId][9];                   // 23 - Packet Delivery Ratio
-    m_plr = flowsDict[flowId][10];                  // 24 - Packet Loss Ratio
-    m_averageTxPacketSize = flowsDict[flowId][11];  // 25 - Average transmitted packet size
-    m_averageRxPacketSize = flowsDict[flowId][14];  // 26 - Average received packet size
-    m_averageThroughput = flowsDict[flowId][15];    // 27 - Average Throughput (Mbps)
-    m_averageDelay = flowsDict[flowId][12];         // 28 - Average End to End delay (s)
-    m_averageJitter = flowsDict[flowId][13];        // 29 - Average jitter Jitter (s)
-    m_activeFlows = activeFlows;                    // 30 - Active nodes/flows
+    std::cout << "Set stats for nodeid " << nodeId << "   flowid " << flowId << std::endl;
+    if (nodeId == -1) {
+        /*
+        std::cout << std::endl << "nodeId: " << nodeId << " - FlowId: " << featuresMap[flowId].flowId[0]; 
+        std::cout <<  " - Sim Time: "  <<  featuresMap[flowId].simTime[0].GetSeconds();
+        std::cout <<  " - Source IP: " <<   featuresMap[flowId].srcAddr[0]; 
+        std::cout <<  " - Destination IP: "  <<  featuresMap[flowId].dstAddr[0];
+        std::cout <<  " - Source Port: "  <<  featuresMap[flowId].srcPort[0]; 
+        std::cout <<  " - Destination Port: "  <<  featuresMap[flowId].dstPort[0];
+        std::cout <<  " - Protocol: " <<  static_cast<uint32_t>(featuresMap[flowId].proto[0]);
+        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[flowId].timeFirstTxPacket[0].GetSeconds();
+        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[flowId].timeLastTxPacket[0].GetSeconds();
+        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[flowId].timeFirstRxPacket[0].GetSeconds();
+        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[flowId].timeLastRxPacket[0].GetSeconds();
+        std::cout <<  " - Tx bytes: "  <<  featuresMap[flowId].txBytes[0]; 
+        std::cout <<  " - Rx bytes: " <<  featuresMap[flowId].rxBytes[0]; 
+        std::cout <<  " - Tx Packets: " <<  featuresMap[flowId].txPackets[0]; 
+        std::cout <<  " - Rx Packets: "  <<  featuresMap[flowId].rxPackets[0]; 
+        std::cout <<  " - Forwarded Packets: " <<  featuresMap[flowId].forwardedPackets[0]; 
+        std::cout <<  " - Dropped Packets: " <<  featuresMap[flowId].droppedPackets[0]; 
+        std::cout <<  " - Delay: "  <<  featuresMap[flowId].delaySum[0]; 
+        std::cout <<  " - Jitter: " <<  featuresMap[flowId].jitterSum[0];
+        std::cout <<  " - LastDelay: "  <<  featuresMap[flowId].lastDelay[0];
+        */
+        m_nodeId = nodeId;
+        m_flowId = flowId;
+        m_simTime = featuresMap[flowId].simTime[0].GetSeconds();                            // 1 - Simulation time (elapsed seconds)
+        m_srcAddr = featuresMap[flowId].srcAddr[0];
+        m_dstAddr = featuresMap[flowId].dstAddr[0];                            // 3 - Destination IPv4 address
+        m_srcPort = featuresMap[flowId].srcPort[0];                            // 4 - Source port
+        m_dstPort = featuresMap[flowId].dstPort[0];                            // 5 - Destination port
+        m_proto = featuresMap[flowId].proto[0];                                // 6 - Protocol
+        m_timeFirstTxPacket = featuresMap[flowId].timeFirstTxPacket[0].GetSeconds();
+        m_timeLastTxPacket = featuresMap[flowId].timeLastTxPacket[0].GetSeconds();
+        m_timeFirstRxPacket = featuresMap[flowId].timeFirstRxPacket[0].GetSeconds();
+        m_timeLastRxPacket = featuresMap[flowId].timeLastRxPacket[0].GetSeconds();
+        m_txBytes = featuresMap[flowId].txBytes[0];                            // 10 - Sent bytes
+        m_rxBytes = featuresMap[flowId].rxBytes[0];                            // 11 - Received bytes
+        m_txPkts = featuresMap[flowId].txPackets[0];                              // 8 - Sent packets
+        m_rxPkts = featuresMap[flowId].rxPackets[0];                              // 9 - Received packets
+        m_forwardedPackets = featuresMap[flowId].forwardedPackets[0];
+        m_droppedPackets = featuresMap[flowId].droppedPackets[0];
+        m_delaySum = featuresMap[flowId].delaySum[0];
+        m_jitterSum = featuresMap[flowId].jitterSum[0];
+        m_lastDelay = featuresMap[flowId].lastDelay[0];
+    }
+    else {
+        /*
+        std::cout << std::endl << "nodeId: " << nodeId << " - FlowId: " << featuresMap[nodeId].flowId[flowId - 1]; 
+        std::cout <<  " - Sim Time: "  <<  featuresMap[nodeId].simTime[flowId - 1].GetSeconds();
+        std::cout <<  " - Source IP: " <<   featuresMap[nodeId].srcAddr[flowId - 1]; 
+        std::cout <<  " - Destination IP: "  <<  featuresMap[nodeId].dstAddr[flowId - 1];
+        std::cout <<  " - Source Port: "  <<  featuresMap[nodeId].srcPort[flowId - 1]; 
+        std::cout <<  " - Destination Port: "  <<  featuresMap[nodeId].dstPort[flowId - 1];
+        std::cout <<  " - Protocol: " <<  static_cast<uint32_t>(featuresMap[nodeId].proto[flowId - 1]);
+        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[nodeId].timeFirstTxPacket[flowId - 1].GetSeconds();
+        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[nodeId].timeLastTxPacket[flowId - 1].GetSeconds();
+        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[nodeId].timeFirstRxPacket[flowId - 1].GetSeconds();
+        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[nodeId].timeLastRxPacket[flowId - 1].GetSeconds();
+        std::cout <<  " - Tx bytes: "  <<  featuresMap[nodeId].txBytes[flowId - 1]; 
+        std::cout <<  " - Rx bytes: " <<  featuresMap[nodeId].rxBytes[flowId - 1]; 
+        std::cout <<  " - Tx Packets: " <<  featuresMap[nodeId].txPackets[flowId - 1]; 
+        std::cout <<  " - Rx Packets: "  <<  featuresMap[nodeId].rxPackets[flowId - 1]; 
+        std::cout <<  " - Forwarded Packets: " <<  featuresMap[nodeId].forwardedPackets[flowId - 1]; 
+        std::cout <<  " - Dropped Packets: " <<  featuresMap[nodeId].droppedPackets[flowId - 1]; 
+        std::cout <<  " - Delay: "  <<  featuresMap[nodeId].delaySum[flowId - 1]; 
+        std::cout <<  " - Jitter: " <<  featuresMap[nodeId].jitterSum[flowId - 1];
+        std::cout <<  " - LastDelay: "  <<  featuresMap[nodeId].lastDelay[flowId - 1];
+        */
+        m_nodeId = nodeId;
+        m_flowId = flowId;
+        m_simTime = featuresMap[nodeId].simTime[flowId - 1].GetSeconds();                            // 1 - Simulation time (elapsed seconds)
+        m_srcAddr = featuresMap[nodeId].srcAddr[flowId - 1];
+        m_dstAddr = featuresMap[nodeId].dstAddr[flowId - 1];                            // 3 - Destination IPv4 address
+        m_srcPort = featuresMap[nodeId].srcPort[flowId - 1];                            // 4 - Source port
+        m_dstPort = featuresMap[nodeId].dstPort[flowId - 1];                            // 5 - Destination port
+        m_proto = featuresMap[nodeId].proto[flowId - 1];                                // 6 - Protocol
+        m_timeFirstTxPacket = featuresMap[nodeId].timeFirstTxPacket[flowId - 1].GetSeconds();
+        m_timeLastTxPacket = featuresMap[nodeId].timeLastTxPacket[flowId - 1].GetSeconds();
+        m_timeFirstRxPacket = featuresMap[nodeId].timeFirstRxPacket[flowId - 1].GetSeconds();
+        m_timeLastRxPacket = featuresMap[nodeId].timeLastRxPacket[flowId - 1].GetSeconds();
+        m_txBytes = featuresMap[nodeId].txBytes[flowId - 1];                            // 10 - Sent bytes
+        m_rxBytes = featuresMap[nodeId].rxBytes[flowId - 1];                            // 11 - Received bytes
+        m_txPkts = featuresMap[nodeId].txPackets[flowId - 1];                              // 8 - Sent packets
+        m_rxPkts = featuresMap[nodeId].rxPackets[flowId - 1];                              // 9 - Received packets
+        m_forwardedPackets = featuresMap[nodeId].forwardedPackets[flowId - 1];
+        m_droppedPackets = featuresMap[nodeId].droppedPackets[flowId - 1];
+        m_delaySum = featuresMap[nodeId].delaySum[flowId - 1];
+        m_jitterSum = featuresMap[nodeId].jitterSum[flowId - 1];
+        m_lastDelay = featuresMap[nodeId].lastDelay[flowId - 1];
+    }
+
+    // Generate advanced features
+    //std::cout << "Generate advanced features" << std::endl;
+    m_flowDuration = m_timeLastRxPacket - m_timeFirstTxPacket;          // Flow duration (Last Tx - First Rx)
+    //std::cout <<  " - FlowDuration: "  <<  m_flowDuration;
+    if (m_flowDuration > 0) {
+        m_throughput = ((m_rxBytes * 8.0) / m_flowDuration) / 1024 / 1024;;            // Throughput (Mbps)
+        //std::cout <<  " - Throughput: "  <<  m_throughput;
+    }
     
-    /*
-    m_totalTxPkts = totalTxPkts;
-    m_totalRxPkts = totalRxPkts;
-    m_totalThroughput = totalThroughput;
-    m_totalDelay = totalDelay;
-    m_totalJitter = totalJitter;
-    m_totalLostPkts = totalLostPkts;
-    m_pdr = pdr;
-    m_plr = plr;
-    m_averageThroughput = averageThroughput;
-    m_averageDelay = averageDelay;
-    m_averageJitter = averageJitter;
-    */
+    if (m_txPkts > 0) {
+        m_pdr = m_rxPkts / m_txPkts;
+        m_plr = m_droppedPackets / m_txPkts;
+        m_averageTxPacketSize = m_txBytes / m_txPkts;
+        //std::cout <<  " - PDR: "  <<  m_pdr;
+        //std::cout <<  " - PLR: "  <<  m_plr;
+        //std::cout <<  " - AvgTxPacketSize: "  <<  m_averageTxPacketSize;
+    }
+    if (m_rxPkts > 0) {
+        m_averageRxPacketSize = m_rxBytes / m_rxPkts;
+        //std::cout <<  " - AvgRxPacketSize: "  <<  m_averageRxPacketSize;
+    }
+    //std::cout <<  std::endl;
 }
 
 /*

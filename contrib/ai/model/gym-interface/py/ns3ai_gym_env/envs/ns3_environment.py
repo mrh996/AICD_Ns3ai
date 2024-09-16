@@ -1,8 +1,10 @@
-import numpy as np
+from contextlib import suppress
+from subprocess import TimeoutExpired
 import gymnasium as gym
-from gymnasium import spaces
 import messages_pb2 as pb
 import ns3ai_gym_msg_py as py_binding
+import numpy as np
+from gymnasium import spaces
 from ns3ai_utils import Experiment
 
 
@@ -19,8 +21,8 @@ class Ns3Env(gym.Env):
         elif spaceDesc.type == pb.Box:
             boxSpacePb = pb.BoxSpace()
             spaceDesc.space.Unpack(boxSpacePb)
-            low = boxSpacePb.low
-            high = boxSpacePb.high
+            low = np.array(boxSpacePb.lows) if boxSpacePb.lows else boxSpacePb.low
+            high = np.array(boxSpacePb.highs) if boxSpacePb.highs else boxSpacePb.high
             shape = tuple(boxSpacePb.shape)
             mtype = boxSpacePb.dtype
 
@@ -73,16 +75,15 @@ class Ns3Env(gym.Env):
             # print(boxContainerPb.shape, boxContainerPb.dtype, boxContainerPb.uintData)
 
             if boxContainerPb.dtype == pb.INT:
-                data = boxContainerPb.intData
+                data = np.array(boxContainerPb.intData, dtype=int)
             elif boxContainerPb.dtype == pb.UINT:
-                data = boxContainerPb.uintData
+                data = np.array(boxContainerPb.uintData, dtype=np.uint)
             elif boxContainerPb.dtype == pb.DOUBLE:
-                data = boxContainerPb.doubleData
+                data = np.array(boxContainerPb.doubleData, dtype=np.float64)
             else:
-                data = boxContainerPb.floatData
+                data = np.array(boxContainerPb.floatData, dtype=np.float32)
 
             # TODO: reshape using shape info
-            data = np.array(data)
             return data
 
         elif dataContainerPb.type == pb.Tuple:
@@ -181,7 +182,8 @@ class Ns3Env(gym.Env):
     def get_extra_info(self):
         return self.extraInfo
 
-    def _pack_data(self, actions, spaceDesc):
+    @classmethod
+    def _pack_data(cls, actions, spaceDesc):
         dataContainer = pb.DataContainer()
 
         spaceType = spaceDesc.__class__
@@ -206,11 +208,11 @@ class Ns3Env(gym.Env):
                 boxContainerPb.dtype = pb.UINT
                 boxContainerPb.uintData.extend(actions)
 
-            elif spaceDesc.dtype in ['float', 'float32', 'float64']:
+            elif spaceDesc.dtype.name in ["float", "float32"]:
                 boxContainerPb.dtype = pb.FLOAT
                 boxContainerPb.floatData.extend(actions)
 
-            elif spaceDesc.dtype in ['double']:
+            elif spaceDesc.dtype.name in ["double", "float64"]:
                 boxContainerPb.dtype = pb.DOUBLE
                 boxContainerPb.doubleData.extend(actions)
 
@@ -224,10 +226,10 @@ class Ns3Env(gym.Env):
             dataContainer.type = pb.Tuple
             tupleDataPb = pb.TupleDataContainer()
 
-            spaceList = list(self.action_space.spaces)
+            spaceList = list(spaceDesc.spaces)
             subDataList = []
             for subAction, subActSpaceType in zip(actions, spaceList):
-                subData = self._pack_data(subAction, subActSpaceType)
+                subData = cls._pack_data(subAction, subActSpaceType)
                 subDataList.append(subData)
 
             tupleDataPb.element.extend(subDataList)
@@ -239,8 +241,8 @@ class Ns3Env(gym.Env):
 
             subDataList = []
             for sName, subAction in actions.items():
-                subActSpaceType = self.action_space.spaces[sName]
-                subData = self._pack_data(subAction, subActSpaceType)
+                subActSpaceType = spaceDesc.spaces[sName]
+                subData = cls._pack_data(subAction, subActSpaceType)
                 subData.name = sName
                 subDataList.append(subData)
 
@@ -267,9 +269,15 @@ class Ns3Env(gym.Env):
     def get_state(self):
         obs = self.get_obs()
         reward = self.get_reward()
-        done = self.is_game_over()
+        terminated = False
+        truncated = False
+        if self.is_game_over():
+            if self.gameOverReason == 1:
+                terminated = True  # end because the agent reached its final state
+            else:
+                truncated = True  # end because the simulation ended (for this agent)
         extraInfo = {"info": self.get_extra_info()}
-        return obs, reward, done, False, extraInfo
+        return obs, reward, terminated, truncated, extraInfo
 
     def __init__(self, targetName, ns3Path, ns3Settings=None, shmSize=4096):
         if self._created:
@@ -306,6 +314,8 @@ class Ns3Env(gym.Env):
         if not self.gameOver:
             self.rx_env_state()
             self.send_close_command()
+            with suppress(TimeoutExpired):
+                self.exp.proc.wait(2)
 
         self.msgInterface = None
         self.newStateRx = False
@@ -315,7 +325,7 @@ class Ns3Env(gym.Env):
         self.gameOverReason = None
         self.extraInfo = None
 
-        self.msgInterface = self.exp.run(show_output=True)
+        self.msgInterface = self.exp.run(setting=self.ns3Settings, show_output=True)
         self.initialize_env()
         # get first observations
         self.rx_env_state()
@@ -332,6 +342,12 @@ class Ns3Env(gym.Env):
         return act
 
     def close(self):
+        if not self.gameOver:
+            self.rx_env_state()
+            self.send_close_command()
+            with suppress(TimeoutExpired):
+                self.exp.proc.wait(2)
+                
         # environment is not needed anymore, so kill subprocess in a straightforward way
         self.exp.kill()
         # destroy the message interface and its shared memory segment

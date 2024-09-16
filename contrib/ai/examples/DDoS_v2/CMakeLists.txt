@@ -1,5 +1,5 @@
 build_lib_example(
-      NAME ns3ai_ddos_v2_gym
+      NAME ns3ai_ddos_gym
       SOURCE_FILES use-gym/sim.cc
       SOURCE_FILES use-gym/ns3gymenv.cc
       LIBRARIES_TO_LINK

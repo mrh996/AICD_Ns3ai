@@ -46,6 +46,11 @@
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
 
+#include "ns3/packet-metadata.h"
+#include "ns3/ipv4-address.h"
+#include "ns3/ipv4-header.h"
+#include "ns3/trace-helper.h"
+
 #include "ns3gymenv.h"
 
 #include <iostream>
@@ -65,20 +70,44 @@
 
 using namespace ns3;
 
+Ptr<FlowMonitor> monitor;
+Ptr<Ipv4FlowClassifier> classifier;
+
+// Map node IDs with features (flows' stats per node)
+FeaturesMap nodeIdFeaturesMap;
+// Map flow IDs with features (overall flows' stats)
+FeaturesMap flowIdFeaturesMap;
+// Store RX packet UIDs for each node to check forwarded packets
+ForwardedMap nodeIdRxPacketsUids;
+// ns3 - gym environment
+Ptr<Ns3GymEnv> nge;
+
+// Nodes within the victim LAN
+NodeContainer csmaNodesVictim;
+// Nodes for attack bots
+NodeContainer botNodes;
+
+bool lastAction;
+
 NS_LOG_COMPONENT_DEFINE("DDoSAttack");
 
-void ApplyAction(uint32_t action, NodeContainer csmaNodesVictim, uint32_t targetNodeId, NodeContainer botNodes) {
+void ApplyAction(uint32_t action, uint32_t targetNodeId) {
     switch (action) {
         case 0: // No attack or stop attack
             // Logic to stop the attack if necessary
+            std::cout<< " No attack performed;";
             NS_LOG_UNCOND("No attack performed: " << action);
-            break;
+            return;
         case 1: // Perform DDoS attack
         {
+            
             NS_LOG_UNCOND("Performing DDoS attack: " << action);
+            lastAction = true;
             Ptr<Node> targetNode = csmaNodesVictim.Get(targetNodeId);
-            Address targetAddress = InetSocketAddress(targetNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(), UDP_SINK_PORT);
-
+            Address targetAddress = Address(InetSocketAddress(targetNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal(), UDP_SINK_PORT));
+            std::cout << " Attack node " << targetNode->GetId() 
+            << "  with address  " << targetNode->GetObject<Ipv4>()->GetAddress(1, 0).GetLocal() 
+            << " at " <<Simulator::Now().GetSeconds() <<" s;"<< std::endl;
             OnOffHelper onoff("ns3::UdpSocketFactory", targetAddress);
             onoff.SetConstantRate(DataRate(DDOS_RATE));
             onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=30]"));
@@ -90,11 +119,14 @@ void ApplyAction(uint32_t action, NodeContainer csmaNodesVictim, uint32_t target
                 onOffApp[k].Start(Seconds(0.0));
                 onOffApp[k].Stop(Seconds(MAX_SIMULATION_TIME));
             }
-            break;
+            std::cout << "Action performed" << std::endl;
+            return;
+            
         }
         default:
+            std::cout<< " Invalid action";
             NS_LOG_UNCOND("Invalid action received: " << action);
-            break;
+            return;
     }
 }
 
@@ -117,41 +149,8 @@ uint32_t Ipv4AddressToInt(ns3::Ipv4Address address)
 /*
 Monitor the flows and exchange info with the Gym env
 */
-void Monitor (FlowMonitorHelper *fmh, Ptr<FlowMonitor> fm, NodeContainer csmaNodesVictim, Ptr<Ns3GymEnv> nge, std::unordered_map<std::string, std::vector<double>> flowsDict, NodeContainer botNodes) {
-    
-    std::string flowId = "";
-    double simTime = 0.0;               // Simulation time (elapsed seconds)
-    uint32_t srcAddr = 0;               // Source IPv4 address
-    uint32_t dstAddr = 0;               // Destination IPv4 address
-    uint16_t srcPort = 0;               // Source port
-    uint16_t dstPort = 0;               // Destination port
-    uint8_t proto = 0;                  // Protocol
-    double flowDuration = 0.0;          // Flow duration (Last Tx - First Rx)
-    double txPkts = 0;                  // Sent packets
-    double rxPkts = 0;                  // Received packets
-    double txBytes = 0;                 // Sent bytes
-    double rxBytes = 0;                 // Received bytes
-    double lostPkts = 0;                // Lost packets
-    double throughput = 0.0;            // Throughput (Mbps)
-    double totalTxPkts = 0;             // Total sent packets
-    double totalRxPkts = 0;             // Total received packets
-    double totalTxBytes = 0;            // Total sent bytes
-    double totalRxBytes = 0;            // Total received bytes
-    double totalFlowDuration = 0.0;     // Total flow duration
-    double totalThroughput = 0.0;       // Total throughput (Mbps)
-    double totalDelay = 0.0;            // Total delay (s)
-    double totalJitter = 0.0;           // Total jitter (s)
-    double totalLostPkts = 0;           // Total packets lost
-    double pdr = 0.0;                   // Packet Delivery Ratio
-    double plr = 0.0;                   // Packet Loss Ratio
-    double averageTxPacketSize = 0.0;   // Average transmitted packet size
-    double averageRxPacketSize = 0.0;   // Average received packet size
-    double averageThroughput = 0.0;     // Average Throughput (Mbps)
-    double averageDelay = 0.0;          // Average End to End delay (s)
-    double averageJitter = 0.0;         // Average jitter Jitter (s)
-    uint32_t activeFlows = 0;           // Active nodes/flows
-    
-    fm->CheckForLostPackets();
+void Monitor () {
+    monitor->CheckForLostPackets();
 
     // Victim Server 1
     Ptr<Node> node_server1 = csmaNodesVictim.Get(1);
@@ -159,174 +158,372 @@ void Monitor (FlowMonitorHelper *fmh, Ptr<FlowMonitor> fm, NodeContainer csmaNod
     Ipv4Address ipv4_address_server1 = ipv4_obj_server1->GetAddress(1, 0).GetLocal();
 
     // Obtain stats about the flows
-    std::map<FlowId, FlowMonitor::FlowStats> flowStats = fm->GetFlowStats();
-    Ptr<Ipv4FlowClassifier> ifc = DynamicCast<Ipv4FlowClassifier>(fmh->GetClassifier());
+    std::map<FlowId, FlowMonitor::FlowStats> flowStats = monitor->GetFlowStats();
     
-    // Obtain stats about the flows
     for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator fs = flowStats.begin(); fs != flowStats.end(); ++fs) {
-        Ipv4FlowClassifier::FiveTuple ft = ifc->FindFlow(fs->first);
-        // Retrieve flow stats for the sink node (Server 1)
-        if (ft.destinationAddress == Ipv4Address(ipv4_address_server1)) {
-            if (fs->second.rxBytes > 0) {
-                activeFlows++;
-            }
-        }
-    }
-    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator fs = flowStats.begin(); fs != flowStats.end(); ++fs) {
-        Ipv4FlowClassifier::FiveTuple ft = ifc->FindFlow(fs->first);
+        Ipv4FlowClassifier::FiveTuple ft = classifier->FindFlow(fs->first);
         // Retrieve flow stats for the sink node (Server 1)
         if (ft.destinationAddress == Ipv4Address(ipv4_address_server1)) {
             // Info for the current flow
-            simTime = Simulator::Now().GetSeconds();
-            srcAddr = Ipv4AddressToInt(ft.sourceAddress);
-            dstAddr = Ipv4AddressToInt(ft.destinationAddress);
-            srcPort = ft.sourcePort;
-            dstPort = ft.destinationPort;
-            proto = ft.protocol;
-            flowDuration = fs->second.timeLastRxPacket.GetSeconds() - fs->second.timeFirstTxPacket.GetSeconds();
-            txPkts = static_cast<double>(fs->second.txPackets);
-            rxPkts = static_cast<double>(fs->second.rxPackets);
-            txBytes = static_cast<double>(fs->second.txBytes);
-            rxBytes = static_cast<double>(fs->second.rxBytes);
-            lostPkts = static_cast<double>(fs->second.lostPackets);
-            
-            // Stats from all the flows
-            totalTxPkts += txPkts;
-            totalRxPkts += rxPkts;
-            totalTxBytes += txBytes;
-            totalRxBytes += rxBytes;
-            totalFlowDuration += flowDuration;
-            throughput = rxBytes * 8.0 / flowDuration / 1024 / 1024;
-            totalThroughput += throughput;
-            totalDelay += fs->second.delaySum.GetSeconds();
-            totalJitter += fs->second.jitterSum.GetSeconds();
-            totalLostPkts += lostPkts;
-            
-            if (totalTxPkts > 0) {
-                pdr = totalRxPkts / totalTxPkts;
-                plr = totalLostPkts / totalTxPkts;
-                averageTxPacketSize = totalTxBytes / totalTxPkts;
-            }
-            
-            if (totalRxPkts > 0) {
-                averageDelay = totalDelay / totalRxPkts;
-                averageJitter = totalJitter / totalRxPkts;
-                averageRxPacketSize = totalRxBytes / totalRxPkts;
-            }
-            
-            if (totalFlowDuration > 0)
-                averageThroughput = totalThroughput / totalFlowDuration;
-
             // Stats for this flow
-            flowId = std::to_string(fs->first);
+            FlowId flowId = fs->first;
+            Time currentSimTime = Simulator::Now();
             // Check if there are already stats for this flow, if not, initialise the map object
-            if (flowsDict.find(flowId) != flowsDict.end()) {
-                flowsDict[flowId][0] += txPkts;
-                flowsDict[flowId][1] += rxPkts;
-                flowsDict[flowId][2] += txBytes;
-                flowsDict[flowId][3] += rxBytes;
-                flowsDict[flowId][4] += flowDuration;
-                flowsDict[flowId][5] += throughput;
-                flowsDict[flowId][6] += fs->second.delaySum.GetSeconds();
-                flowsDict[flowId][7] += fs->second.jitterSum.GetSeconds();
-                flowsDict[flowId][8] += lostPkts;
-                if (flowsDict[flowId][0] > 0) {
-                    flowsDict[flowId][9] = flowsDict[flowId][1] / flowsDict[flowId][0];
-                    flowsDict[flowId][10] = flowsDict[flowId][8] / flowsDict[flowId][0];
-                    flowsDict[flowId][11] = flowsDict[flowId][2] / flowsDict[flowId][0];
-                }
-                else if (txPkts > 0) {
-                    flowsDict[flowId][9] = rxPkts / txPkts;
-                    flowsDict[flowId][10] = lostPkts / txPkts;
-                    flowsDict[flowId][11] = txBytes / txPkts;
-                }
-                if (flowsDict[flowId][1] > 0) {
-                    flowsDict[flowId][12] = flowsDict[flowId][6] / flowsDict[flowId][1];
-                    flowsDict[flowId][13] = flowsDict[flowId][7] / flowsDict[flowId][1];
-                    flowsDict[flowId][14] = flowsDict[flowId][3] / flowsDict[flowId][1];
-                }
-                else if (rxPkts > 0) {
-                    flowsDict[flowId][12] = fs->second.delaySum.GetSeconds() / rxPkts;
-                    flowsDict[flowId][13] = fs->second.jitterSum.GetSeconds() / rxPkts;
-                    flowsDict[flowId][14] = rxBytes / rxPkts;
-                }
-                if (flowsDict[flowId][4] > 0)
-                    flowsDict[flowId][15] = flowsDict[flowId][5] / flowsDict[flowId][4];
-                else if (flowDuration > 0)
-                    flowsDict[flowId][15] = throughput / flowDuration;
+            if (flowIdFeaturesMap.find(flowId) != flowIdFeaturesMap.end()) {
+                flowIdFeaturesMap[flowId].simTime[0] = currentSimTime;
+                flowIdFeaturesMap[flowId].timeFirstTxPacket[0] = fs->second.timeFirstTxPacket;
+                flowIdFeaturesMap[flowId].timeLastTxPacket[0] = fs->second.timeLastTxPacket;
+                flowIdFeaturesMap[flowId].timeFirstRxPacket[0] = fs->second.timeFirstRxPacket;
+                flowIdFeaturesMap[flowId].timeLastRxPacket[0] = fs->second.timeLastRxPacket;
+                flowIdFeaturesMap[flowId].txBytes[0] += fs->second.txBytes;
+                flowIdFeaturesMap[flowId].rxBytes[0] += fs->second.rxBytes;
+                flowIdFeaturesMap[flowId].txPackets[0] += fs->second.txPackets;
+                flowIdFeaturesMap[flowId].rxPackets[0] += fs->second.rxPackets;
+                flowIdFeaturesMap[flowId].forwardedPackets[0] = flowIdFeaturesMap[flowId].rxPackets[0];
+                flowIdFeaturesMap[flowId].droppedPackets[0] += fs->second.lostPackets;
+                flowIdFeaturesMap[flowId].delaySum[0] += fs->second.delaySum.GetSeconds();
+                flowIdFeaturesMap[flowId].jitterSum[0] += fs->second.jitterSum.GetSeconds();
+                flowIdFeaturesMap[flowId].lastDelay[0] = fs->second.lastDelay.GetSeconds();
             }
             else {
-                std::vector<double> myList;
-                flowsDict[flowId] = myList;
-                flowsDict[flowId].push_back(txPkts);                                                    // [0] totalTxPkts
-                flowsDict[flowId].push_back(rxPkts);                                                    // [1] totalRxPkts
-                flowsDict[flowId].push_back(txBytes);                                                   // [2] totalTxBytes
-                flowsDict[flowId].push_back(rxBytes);                                                   // [3] totalRxBytes
-                flowsDict[flowId].push_back(flowDuration);                                              // [4] totalFlowDuration
-                flowsDict[flowId].push_back(throughput);                                                // [5] totalThroughput
-                flowsDict[flowId].push_back(fs->second.delaySum.GetSeconds());                          // [6] totalDelay
-                flowsDict[flowId].push_back(fs->second.jitterSum.GetSeconds());                         // [7] totalJitter
-                flowsDict[flowId].push_back(lostPkts);                                                  // [8] totalLostPkts
-                if (txPkts > 0) {
-                    flowsDict[flowId].push_back(rxPkts / txPkts);                                       // [9] pdr
-                    flowsDict[flowId].push_back(lostPkts / txPkts);                                     // [10] plr
-                    flowsDict[flowId].push_back(txBytes / txPkts);                                      // [11] averageTxPacketSize
-                }
-                else {
-                    flowsDict[flowId].push_back(0.0);                                                   // [9] pdr
-                    flowsDict[flowId].push_back(0.0);                                                   // [10] plr
-                    flowsDict[flowId].push_back(0.0);                                                   // [11] averageTxPacketSize
-                }
-                if (rxPkts > 0) {
-                    flowsDict[flowId].push_back(fs->second.delaySum.GetSeconds() / rxPkts);             // [12] averageDelay
-                    flowsDict[flowId].push_back(fs->second.jitterSum.GetSeconds() / rxPkts);            // [13] averageJitter
-                    flowsDict[flowId].push_back(rxBytes / rxPkts);                                      // [14] averageRxPacketSize
-                }
-                else {
-                    flowsDict[flowId].push_back(0.0);                                                   // [12] averageDelay
-                    flowsDict[flowId].push_back(0.0);                                                   // [13] averageJitter
-                    flowsDict[flowId].push_back(0.0);                                                   // [14] averageRxPacketSize
-                }
-                if (flowDuration > 0)
-                    flowsDict[flowId].push_back(throughput / flowDuration);                             // [15] averageThroughput
-                else
-                    flowsDict[flowId].push_back(0.0);                                                   // [15] averageThroughput
-                
+                flowIdFeaturesMap[flowId].flowId.push_back(flowId);
+                flowIdFeaturesMap[flowId].srcAddr.push_back(Ipv4AddressToInt(ft.sourceAddress));
+                flowIdFeaturesMap[flowId].dstAddr.push_back(Ipv4AddressToInt(ft.destinationAddress));
+                flowIdFeaturesMap[flowId].srcPort.push_back(ft.sourcePort);
+                flowIdFeaturesMap[flowId].dstPort.push_back(ft.destinationPort);
+                flowIdFeaturesMap[flowId].proto.push_back(ft.protocol);
+                flowIdFeaturesMap[flowId].simTime.push_back(currentSimTime);
+                flowIdFeaturesMap[flowId].timeFirstTxPacket.push_back(fs->second.timeFirstTxPacket);
+                flowIdFeaturesMap[flowId].timeLastTxPacket.push_back(fs->second.timeLastTxPacket);
+                flowIdFeaturesMap[flowId].timeFirstRxPacket.push_back(fs->second.timeFirstRxPacket);
+                flowIdFeaturesMap[flowId].timeLastRxPacket.push_back(fs->second.timeLastRxPacket);
+                flowIdFeaturesMap[flowId].txBytes.push_back(fs->second.txBytes);
+                flowIdFeaturesMap[flowId].rxBytes.push_back(fs->second.rxBytes);
+                flowIdFeaturesMap[flowId].txPackets.push_back(fs->second.txPackets);
+                flowIdFeaturesMap[flowId].rxPackets.push_back(fs->second.rxPackets);
+                flowIdFeaturesMap[flowId].forwardedPackets.push_back(flowIdFeaturesMap[flowId].rxPackets[0]);
+                flowIdFeaturesMap[flowId].droppedPackets.push_back(fs->second.lostPackets);
+                flowIdFeaturesMap[flowId].delaySum.push_back(fs->second.delaySum.GetSeconds());
+                flowIdFeaturesMap[flowId].jitterSum.push_back(fs->second.jitterSum.GetSeconds());
+                flowIdFeaturesMap[flowId].lastDelay.push_back(fs->second.lastDelay.GetSeconds());
             }
             
             // Set the stats to be sent to the Gym env
-            nge->SetStats(flowId, simTime, srcAddr, dstAddr, srcPort, dstPort, proto, flowDuration, txPkts, rxPkts, txBytes, rxBytes, lostPkts, throughput,
-                          flowsDict, totalTxPkts, totalRxPkts, totalThroughput, totalDelay, totalJitter, totalLostPkts, pdr, plr,
-                          averageTxPacketSize, averageRxPacketSize, averageThroughput, averageDelay, averageJitter, activeFlows);
+            nge->SetStats(-1, flowId, flowIdFeaturesMap);
 
-            std::cout << "Flow ID: " << fs->first << " (" << ft.sourceAddress << " -> " << ft.destinationAddress << ")" << std::endl;
-            std::cout << "  Simulation time: " << simTime << "s;" << std::endl;
-            std::cout << "  Tx Packets: " << txPkts << ";" << std::endl;
-            std::cout << "  Rx Packets: " << rxPkts << ";" << std::endl;
-            std::cout << "  Avg Tx Packet Size: " << averageTxPacketSize << ";" << std::endl;
-            std::cout << "  Avg Rx Packet Size: " << averageRxPacketSize << ";" << std::endl;
-            std::cout << "  Flows Packet Delivery Ratio: " << pdr << ";" << std::endl;
-            std::cout << "  Flows Packet Loss Ratio: " << plr << ";" << std::endl;
-            std::cout << "  Average End-to-End Delay: " << averageDelay << "s;" << std::endl;
-            std::cout << "  Average Jitter: " << averageJitter << "s;" << std::endl;
-            std::cout << "  Average Throughput: " << averageThroughput << " Mbps;" << std::endl;
-            
             // Notify for new flow stats and get action(s) from Gym env
             uint32_t action = nge->NotifyGetAction();
             std::cout << "get_action: " << action << ";" << std::endl;
+            std::cout << "Simulation time: " << currentSimTime << "s;" << std::endl;
             
             // Target is Server 1 inside Victim LAN
-            ApplyAction(action, csmaNodesVictim, 1, botNodes);
+            if(lastAction == false)
+                ApplyAction(action, 1);
+            //Simulator::Schedule(Seconds(0.0), &ApplyAction, action, 1);
         }
     }
     // Schedule after one second
-    Simulator::Schedule(Seconds(1), &Monitor, fmh, fm, csmaNodesVictim, nge, flowsDict, botNodes);
+    Simulator::Schedule(Seconds(1), &Monitor);
 }
 
+void extract_features(Ptr<const Packet> packet, uint32_t nodeID, const std::string &eventType) {
+    //packet->Print(std::cout);
+    //std::cout << "Packet Tx  "<< std::endl;
+    // Create a copy of the packet to parse it
+    Ptr<Packet> packetCopy = packet->Copy();
+
+
+    uint32_t packetBytes = packetCopy->GetSize();                       // Packet bytes
+    //std::cout << "Extract feature  " << eventType  << std::endl;
+    Time currentSimTime = Simulator::Now();
+
+    int forwarded = 0;
+    // If a packet is received save its Uid for the current node
+    if (eventType == "Rx") {
+        nodeIdRxPacketsUids[nodeID].push_back(packetCopy->GetUid());
+    }
+    else {
+        // If a packet is transmitted check if it was received by the same node and remove the Uid
+        if (eventType == "Tx") {
+            // Retrieve the index of the packet Uid
+            auto it = std::find(nodeIdRxPacketsUids[nodeID].begin(), nodeIdRxPacketsUids[nodeID].end(), packetCopy->GetUid()); 
+  
+            // If the packet Uid is found, the packet has been forwarded, then remove the Uid
+            if (it != nodeIdRxPacketsUids[nodeID].end()) { 
+                forwarded = 1;
+                nodeIdRxPacketsUids[nodeID].erase(it); 
+            } 
+        }
+    }
+
+    // Extract info from the IPv4 header
+    Ipv4Header ipv4Header;
+    packetCopy->RemoveHeader(ipv4Header);
+
+    uint32_t srcAddr = Ipv4AddressToInt(ipv4Header.GetSource());        // Source address
+    uint32_t dstAddr = Ipv4AddressToInt(ipv4Header.GetDestination());   // Destination address
+    uint8_t proto = ipv4Header.GetProtocol();                           // Protocol
+
+    uint16_t srcPort = 0;                                               // Source port
+    uint16_t dstPort = 0;                                               // Destination port
+
+    Ipv4FlowClassifier::FiveTuple t;
+    t.sourceAddress = ipv4Header.GetSource();
+    t.destinationAddress = ipv4Header.GetDestination();
+    t.protocol = proto;
+
+    // Extract info from the UDP header
+    if(proto == UdpL4Protocol::PROT_NUMBER) {
+        //packet->Print(std::cout);
+        UdpHeader udpHeader;
+        packetCopy->RemoveHeader(udpHeader);
+        srcPort = udpHeader.GetSourcePort();
+        dstPort = udpHeader.GetDestinationPort();
+        t.sourcePort = udpHeader.GetSourcePort();
+        t.destinationPort = udpHeader.GetDestinationPort();
+    }
+    // Extract info from the TCP header
+    else if(proto == TcpL4Protocol::PROT_NUMBER) {
+        TcpHeader tcpHeader;
+        packetCopy->RemoveHeader(tcpHeader);
+        srcPort = tcpHeader.GetSourcePort();
+        dstPort = tcpHeader.GetDestinationPort();
+        t.sourcePort = tcpHeader.GetSourcePort();
+        t.destinationPort = tcpHeader.GetDestinationPort();
+    }
+
+    //std::cout << "Map flowID  "  << std::endl;
+    FlowId flowId = 0;
+    // Iterate through the recorded flows to find a match
+    std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats();
+    //for (const auto& flow : stats) {
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator fs = stats.begin(); fs != stats.end(); ++fs) {
+        Ipv4FlowClassifier::FiveTuple flowTuple = classifier->FindFlow(fs->first);
+        if (flowTuple == t) {
+            flowId = fs->first; // Found the matching FlowId
+            break;
+        }
+    }
+
+    //std::cout << "Create dict for nodeid " << nodeID << "   flowid " << flowId << std::endl;
+    // Check if the nodeId is already in the dictionary
+    if (nodeIdFeaturesMap.find(nodeID) != nodeIdFeaturesMap.end()) {
+        // Node Id is in the dictionary so update stats
+        auto it = find(nodeIdFeaturesMap[nodeID].flowId.begin(), nodeIdFeaturesMap[nodeID].flowId.end(), flowId);
+        // Checking if Flow Id is found or not
+        if (it != nodeIdFeaturesMap[nodeID].flowId.end()) {
+            // Flow Id already present for an existing node, update stats
+            uint32_t index = it - nodeIdFeaturesMap[nodeID].flowId.begin();
+            //std::cout << "Existing flow id for existing node at index: " << nodeID << " - " << flowId << " - " << index + 1 << std::endl;
+            if (eventType == "Tx") {
+                nodeIdFeaturesMap[nodeID].timeLastTxPacket[index] = currentSimTime;
+                nodeIdFeaturesMap[nodeID].txBytes[index] += packetBytes;
+                nodeIdFeaturesMap[nodeID].txPackets[index] += 1;
+                if (forwarded == 1)
+                    nodeIdFeaturesMap[nodeID].forwardedPackets[index] += 1;
+            } else if (eventType == "Rx") {
+                nodeIdFeaturesMap[nodeID].timeLastRxPacket[index] = currentSimTime;
+                nodeIdFeaturesMap[nodeID].rxBytes[index] += packetBytes;
+                nodeIdFeaturesMap[nodeID].rxPackets[index] += 1;
+                if (nodeIdFeaturesMap[nodeID].txPackets[index] > 0) { // This assumes no computational delays within an end node
+                    double delay = currentSimTime.GetSeconds() - nodeIdFeaturesMap[nodeID].timeLastTxPacket[index].GetSeconds();
+                    nodeIdFeaturesMap[nodeID].delaySum[index] += delay;
+                    if (nodeIdFeaturesMap[nodeID].lastDelay[index] > 0) {
+                        nodeIdFeaturesMap[nodeID].jitterSum[index] += fabs(delay - nodeIdFeaturesMap[nodeID].lastDelay[index]);
+                    }
+                    nodeIdFeaturesMap[nodeID].lastDelay[index] = delay;
+                }
+            } else if (eventType == "Drop") {
+                nodeIdFeaturesMap[nodeID].droppedPackets[index] += 1;
+            }
+        }
+        else {
+            // New Flow Id for an existing node, init stats
+            //std::cout << "New flow id for existing node: " << nodeID << " - " << flowId << std::endl;
+            nodeIdFeaturesMap[nodeID].flowId.push_back(flowId);
+            nodeIdFeaturesMap[nodeID].simTime.push_back(currentSimTime);
+            nodeIdFeaturesMap[nodeID].srcAddr.push_back(srcAddr);
+            nodeIdFeaturesMap[nodeID].dstAddr.push_back(dstAddr);
+            nodeIdFeaturesMap[nodeID].srcPort.push_back(srcPort);
+            nodeIdFeaturesMap[nodeID].dstPort.push_back(dstPort);
+            nodeIdFeaturesMap[nodeID].proto.push_back(proto);
+            if (eventType == "Tx") {
+                nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(currentSimTime);
+                nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(currentSimTime);
+                nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].txBytes.push_back(packetBytes);
+                nodeIdFeaturesMap[nodeID].rxBytes.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].txPackets.push_back(1.0);
+                nodeIdFeaturesMap[nodeID].rxPackets.push_back(0.0);
+                if (forwarded == 1)
+                    nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(1.0);
+                else
+                    nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].droppedPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+            } else if (eventType == "Rx") {
+                nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(currentSimTime);
+                nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(currentSimTime);
+                nodeIdFeaturesMap[nodeID].txBytes.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].rxBytes.push_back(packetBytes);
+                nodeIdFeaturesMap[nodeID].txPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].rxPackets.push_back(1.0);
+                nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].droppedPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+            } else if (eventType == "Drop") {
+                nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(Seconds(0.0));
+                nodeIdFeaturesMap[nodeID].txBytes.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].rxBytes.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].txPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].rxPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].droppedPackets.push_back(1.0);
+                nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+                nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+            }
+        }
+    }
+	else {
+        // Node Id is not in the dictionary so init stats
+        //std::cout << "Node id not in the dictionary; add: " << nodeID << std::endl;
+        nodeIdFeaturesMap[nodeID].flowId.push_back(flowId);
+        nodeIdFeaturesMap[nodeID].simTime.push_back(currentSimTime);
+        nodeIdFeaturesMap[nodeID].srcAddr.push_back(srcAddr);
+        nodeIdFeaturesMap[nodeID].dstAddr.push_back(dstAddr);
+        nodeIdFeaturesMap[nodeID].srcPort.push_back(srcPort);
+        nodeIdFeaturesMap[nodeID].dstPort.push_back(dstPort);
+        nodeIdFeaturesMap[nodeID].proto.push_back(proto);
+        if (eventType == "Tx") {
+            nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(currentSimTime);
+            nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(currentSimTime);
+            nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].txBytes.push_back(packetBytes);
+            nodeIdFeaturesMap[nodeID].rxBytes.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].txPackets.push_back(1.0);
+            nodeIdFeaturesMap[nodeID].rxPackets.push_back(0.0);
+            if (forwarded == 1)
+                nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(1.0);
+            else
+                nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].droppedPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+        } else if (eventType == "Rx") {
+            nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(currentSimTime);
+            nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(currentSimTime);
+            nodeIdFeaturesMap[nodeID].txBytes.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].rxBytes.push_back(packetBytes);
+            nodeIdFeaturesMap[nodeID].txPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].rxPackets.push_back(1.0);
+            nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].droppedPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+        } else if (eventType == "Drop") {
+            nodeIdFeaturesMap[nodeID].timeFirstTxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeLastTxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeFirstRxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].timeLastRxPacket.push_back(Seconds(0.0));
+            nodeIdFeaturesMap[nodeID].txBytes.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].rxBytes.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].txPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].rxPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].forwardedPackets.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].droppedPackets.push_back(1.0);
+            nodeIdFeaturesMap[nodeID].delaySum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].jitterSum.push_back(0.0);
+            nodeIdFeaturesMap[nodeID].lastDelay.push_back(0.0);
+        }
+    }
+
+    /*
+    if(proto == UdpL4Protocol::PROT_NUMBER) {
+        std::cout << std::endl << "NodeID: " << nodeID << " - " << eventType << " - FlowId: " << nodeIdFeaturesMap[nodeID].flowId[flowId - 1] 
+                << " - Sim Time: " << nodeIdFeaturesMap[nodeID].simTime[flowId - 1] 
+                << " - Source IP: " << ipv4Header.GetSource() << " - " << nodeIdFeaturesMap[nodeID].srcAddr[flowId - 1] 
+                << " - Destination IP: " << ipv4Header.GetDestination() << " - " << nodeIdFeaturesMap[nodeID].dstAddr[flowId - 1]
+                << " - Source Port: " << nodeIdFeaturesMap[nodeID].srcPort[flowId - 1] 
+                << " - Destination Port: " << nodeIdFeaturesMap[nodeID].dstPort[flowId - 1]
+                << " - Protocol: " << static_cast<uint32_t>(nodeIdFeaturesMap[nodeID].proto[flowId - 1])
+                << " - Tx bytes: " << nodeIdFeaturesMap[nodeID].txBytes[flowId - 1] 
+                << " - Rx bytes: " << nodeIdFeaturesMap[nodeID].rxBytes[flowId - 1] 
+                << " - Tx Packets: " << nodeIdFeaturesMap[nodeID].txPackets[flowId - 1] 
+                << " - Rx Packets: " << nodeIdFeaturesMap[nodeID].rxPackets[flowId - 1] 
+                << " - Forwarded Packets: " << nodeIdFeaturesMap[nodeID].forwardedPackets[flowId - 1] 
+                << " - Dropped Packets: " << nodeIdFeaturesMap[nodeID].droppedPackets[flowId - 1] 
+                << " - Delay: " << nodeIdFeaturesMap[nodeID].delaySum[flowId - 1] 
+                << " - Jitter: " << nodeIdFeaturesMap[nodeID].jitterSum[flowId - 1]  << std::endl;
+    }
+    */
+
+    //std::cout << "Send dict to Gym env for nodeid " << nodeID << "   flowid " << flowId << std::endl;
+    // Set the stats to be sent to the Gym env
+    //nge->SetStats(nodeID, flowId, nodeIdFeaturesMap);
+
+    // Notify for new flow stats and get action(s) from Gym env
+    //uint32_t action = nge->NotifyGetAction();
+    //uint32_t action = nge->NotifyGetAction();
+    //std::cout << "get_action: " << action << ";" << std::endl;
+    //std::cout << "Simulation time: " << currentSimTime << "s;" << std::endl;
+    
+    // Target is Server 1 inside Victim LAN
+    //Simulator::Schedule(Seconds(0.0), &ApplyAction, action, 1);
+    // Set the stats to be sent to the Gym env
+    nge->SetStats(nodeID, flowId, nodeIdFeaturesMap);
+
+    // Notify for new flow stats and get action(s) from Gym env
+    uint32_t action = nge->NotifyGetAction();
+    std::cout << "extract features - get_action: " << action << ";" << std::endl;
+    std::cout << "Simulation time: " << currentSimTime << "s;" << std::endl;
+    
+    // Target is Server 1 inside Victim LAN
+    if(lastAction == false)
+        ApplyAction(action, 1);
+}
+
+/*
+Callback to trace information about Tx packets and exchange info with the Gym env
+*/
+void TxPacketTraceCallback(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
+{
+    extract_features(packet, ipv4->GetObject<Node>()->GetId(), "Tx");
+}
+
+/*
+Callback to trace information about Rx packets and exchange info with the Gym env
+*/
+void RxPacketTraceCallback(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
+{
+    //std::cout << "Packet Rx  "<< std::endl;
+    // Create a copy of the packet to parse it
+    //Ptr<Packet> packetCopy = packet->Copy();
+    extract_features(packet, ipv4->GetObject<Node>()->GetId(), "Rx");
+}
 
 int main (int argc, char *argv[])
 {
     bool verbose = true;
+    lastAction = false;
+    // Number of Switches (SW) and Routers/Firewalls (FW)
+    uint32_t nP2pVictim = 2;
+    // Number of Servers and Workstations
     uint32_t nCsmaVictim = 10;
 
     CommandLine cmd;
@@ -334,37 +531,44 @@ int main (int argc, char *argv[])
     cmd.AddValue("verbose", "Tell echo applications to log if true", verbose);
 
     cmd.Parse(argc, argv);
-    
-    // Used to map flows and stats
-    std::unordered_map<std::string, std::vector<double>> flowsDict;
+
+    // Used to map store the NodeIDs of all victim nodes
+    std::vector<Ptr<Node>> victimNodeIDs;
 
     Time::SetResolution(Time::NS);
     if (verbose) {
         LogComponentEnable("UdpEchoClientApplication", LOG_LEVEL_INFO);
         LogComponentEnable("UdpEchoServerApplication", LOG_LEVEL_INFO);
+        Packet::EnablePrinting();
     }
 
     // OpenGym Env --- has to be created before any other thing
     Ptr<OpenGymInterface> openGymInterface = OpenGymInterface::Get();
-    Ptr<Ns3GymEnv> nge = CreateObject<Ns3GymEnv>();
+    nge = CreateObject<Ns3GymEnv>();
 
     nCsmaVictim = nCsmaVictim == 0 ? 1 : nCsmaVictim;
 
     // SW Victim (0) and Router/FW Victim (1)
     NodeContainer p2pNodesVictim;
-    p2pNodesVictim.Create(2);
+    p2pNodesVictim.Create(nP2pVictim);
+    // Add the created node IDs into the list
+    for (uint32_t i = 0; i < p2pNodesVictim.GetN(); ++i) {
+        victimNodeIDs.push_back(p2pNodesVictim.Get(i));
+    }
     
     // Victim LAN nodes (2 servers and 8 workstations connected to the SW Victim)
-    NodeContainer csmaNodesVictim;
     csmaNodesVictim.Add(p2pNodesVictim.Get(0)); // SW Victim (0)
     csmaNodesVictim.Create(nCsmaVictim);        // Servers (1 and 2) and Workstations (3 to 11)
-    
+    // Add the created node IDs into the list (start from 1 as node 0 is the SW Victim)
+    for (uint32_t i = 1; i < csmaNodesVictim.GetN(); ++i) {
+        victimNodeIDs.push_back(csmaNodesVictim.Get(i));
+    }
+
     // Internet Router for Attacker and Normal nodes
     NodeContainer p2pNodesInternet;
     p2pNodesInternet.Create(1);
     
     // Nodes for attack bots
-    NodeContainer botNodes;
     botNodes.Create(NUMBER_OF_BOTS);
     
     // Nodes for normal clients
@@ -412,16 +616,17 @@ int main (int argc, char *argv[])
 
     Ipv4AddressHelper address;
     address.SetBase("10.1.1.0", "255.255.255.0");
-    Ipv4InterfaceContainer p2pInterfacesVictim;
-    p2pInterfacesVictim = address.Assign(p2pDevicesVictim);
+    Ipv4InterfaceContainer p2pInterfacesVictim = address.Assign(p2pDevicesVictim);
+    
+    // Enable IP forwarding on the Router/FW Victim
+    Ptr<Ipv4> ipv4 = p2pNodesVictim.Get(1)->GetObject<Ipv4>();
+    ipv4->SetAttribute("IpForward", BooleanValue(true));
 
     address.SetBase("10.1.2.0", "255.255.255.0");
-    Ipv4InterfaceContainer csmaInterfacesVictim;
-    csmaInterfacesVictim = address.Assign(csmaDevicesVictim);
+    Ipv4InterfaceContainer csmaInterfacesVictim = address.Assign(csmaDevicesVictim);
     
     address.SetBase("10.1.3.0", "255.255.255.0");
-    Ipv4InterfaceContainer p2pInterfacesInternet;
-    p2pInterfacesInternet = address.Assign(p2pDevicesInternet);
+    Ipv4InterfaceContainer p2pInterfacesInternet = address.Assign(p2pDevicesInternet);
 
     address.SetBase("10.0.0.0", "255.255.255.252");
     for (int j = 0; j < NUMBER_OF_BOTS; ++j) {
@@ -430,8 +635,7 @@ int main (int argc, char *argv[])
     }
     
     address.SetBase("10.0.1.0", "255.255.255.0");
-    Ipv4InterfaceContainer clientInterfaces;
-    clientInterfaces = address.Assign(clientDevicesContainer);
+    Ipv4InterfaceContainer clientInterfaces = address.Assign(clientDevicesContainer);
     
     /*
     // DDoS Application Behaviour
@@ -463,7 +667,7 @@ int main (int argc, char *argv[])
     ApplicationContainer UDPSinkApp = UDPsink.Install(csmaNodesVictim.Get(1));   // UDP Server (1)
     UDPSinkApp.Start(Seconds(0.0));
     UDPSinkApp.Stop(Seconds(MAX_SIMULATION_TIME));
-    
+
     // TCP Sink Application on server side
     PacketSinkHelper TCPsink("ns3::TcpSocketFactory",
                              InetSocketAddress(Ipv4Address::GetAny(), TCP_SINK_PORT));
@@ -489,8 +693,10 @@ int main (int argc, char *argv[])
 
     //pp1.EnablePcapAll("second");
     //csmaVictim.EnablePcap("second", csmaDevicesVictim.Get(1), true);
+    //csma.EnablePcapAll ("csma-one-subnet", false);
 
     // Set up NetAnim
+    /*
     AnimationInterface anim ("DDoSim_v2.xml");
     anim.SetMaxPktsPerTraceFile(50000000);
 
@@ -513,12 +719,30 @@ int main (int argc, char *argv[])
     {
         ns3::AnimationInterface::SetConstantPosition(botNodes.Get(l), x_pos++, 25);
     }
+    */
     
     // Monitor the flow(s) and export stats to XML
-    FlowMonitorHelper fmh;
-    Ptr<FlowMonitor> fm = fmh.InstallAll();
-    fm->SerializeToXmlFile("flowmonitor.xml", true, true);
-    Monitor(&fmh, fm, csmaNodesVictim, nge, flowsDict, botNodes);
+    FlowMonitorHelper flowmonHelper;
+    monitor = flowmonHelper.InstallAll();
+    //monitor->SerializeToXmlFile("flowmonitor.xml", true, true);
+    classifier = DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
+
+    // Attach the callback to trace packets passing through the nodes within the victim network
+    for (uint32_t i = 0; i < p2pNodesVictim.GetN(); ++i)
+    {
+        Ptr<Ipv4> ipv4 = p2pNodesVictim.Get(i)->GetObject<Ipv4>();
+        ipv4->TraceConnectWithoutContext("Tx", MakeCallback(&TxPacketTraceCallback));
+        ipv4->TraceConnectWithoutContext("Rx", MakeCallback(&RxPacketTraceCallback));
+    }
+    for (uint32_t i = 1; i < csmaNodesVictim.GetN(); ++i)
+    {
+        Ptr<Ipv4> ipv4 = csmaNodesVictim.Get(i)->GetObject<Ipv4>();
+        ipv4->TraceConnectWithoutContext("Tx", MakeCallback(&TxPacketTraceCallback));
+        ipv4->TraceConnectWithoutContext("Rx", MakeCallback(&RxPacketTraceCallback));
+    }
+
+    // Monitor overall flow stats per second
+    Monitor();
 
     Simulator::Run();
     Simulator::Destroy();

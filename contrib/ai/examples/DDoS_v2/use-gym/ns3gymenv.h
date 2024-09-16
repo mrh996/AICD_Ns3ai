@@ -18,7 +18,6 @@
  * Author: Piotr Gawlowicz <gawlowicz@tkn.tu-berlin.de>
  *
  * Modify: Valerio Selis <v.selis@liverpool.ac.uk>
- * Modify: Ronghui Mu <ronghui.mu@liverpool.ac.uk>
  *
  */
 
@@ -28,6 +27,7 @@
 
 #include <ns3/ai-module.h>
 #include "ns3/ipv4-address.h"
+#include "structures.h"
 
 namespace ns3 {
 
@@ -51,47 +51,36 @@ public:
     // Notify for new stats and retrieve action(s) from the Gym Env (Python)
     uint32_t NotifyGetAction();
     // Send flow stats to the Gym Env (Python)
-    void SetStats(std::string flowId, double simTime, uint32_t srcAddr, uint32_t dstAddr, uint16_t srcPort,
-                  uint16_t dstPort, uint8_t proto, double flowDuration, double txPkts, double rxPkts,
-                  double txBytes, double rxBytes, double lostPkts, double throughput,
-                  std::unordered_map<std::string, std::vector<double>> flowsDict,
-                  double totalTxPkts, double totalRxPkts, double totalThroughput, double totalDelay,
-                  double totalJitter, double totalLostPkts, double pdr, double plr,
-                  double averageTxPacketSize, double averageRxPacketSize,
-                  double averageThroughput, double averageDelay, double averageJitter, uint32_t activeFlows);
+    void SetStats(int nodeId, int flowId, FeaturesMap& nodeIdFeaturesMap);
 
 private:
-    std::string m_flowId;
+    double m_nodeId;
+    uint32_t m_flowId;
     double m_simTime;               // Simulation time (elapsed seconds)
     uint32_t m_srcAddr;             // Source IPv4 address
     uint32_t m_dstAddr;             // Destination IPv4 address
     uint16_t m_srcPort;             // Source port
     uint16_t m_dstPort;             // Destination port
     uint8_t m_proto;                // Protocol
-    double m_flowDuration;          // Flow duration (Last Tx - First Rx)
-    double m_txPkts;                // Sent packets
-    double m_rxPkts;                // Received packets
+    double m_timeFirstTxPacket;
+    double m_timeLastTxPacket;
+    double m_timeFirstRxPacket;
+    double m_timeLastRxPacket;
     double m_txBytes;               // Sent bytes
     double m_rxBytes;               // Received bytes
-    double m_lostPkts;              // Lost packets
+    double m_txPkts;                // Sent packets
+    double m_rxPkts;                // Received packets
+    uint32_t m_forwardedPackets;
+    uint32_t m_droppedPackets;
+    double m_delaySum;
+    double m_jitterSum;
+    double m_lastDelay;
     double m_throughput;            // Throughput (Mbps)
-    double m_totalTxPkts;           // Total sent packets
-    double m_totalRxPkts;           // Total received packets
-    double m_totalTxBytes;          // Total sent bytes
-    double m_totalRxBytes;          // Total received bytes
-    double m_totalFlowDuration;     // Total flow duration
-    double m_totalThroughput;       // Total throughput (Mbps)
-    double m_totalDelay;            // Total delay (s)
-    double m_totalJitter;           // Total jitter (s)
-    double m_totalLostPkts;         // Total packets lost
+    double m_flowDuration;          // Flow duration (Last Tx - First Rx)
     double m_pdr;                   // Packet Delivery Ratio
     double m_plr;                   // Packet Loss Ratio
     double m_averageTxPacketSize;   // Average transmitted packet size
     double m_averageRxPacketSize;   // Average received packet size
-    double m_averageThroughput;     // Average Throughput (Mbps)
-    double m_averageDelay;          // Average End to End delay (s)
-    double m_averageJitter;         // Average jitter Jitter (s)
-    uint32_t m_activeFlows;         // Active nodes/flows
 
     // Variable(s) to receive the action(s) from the Gym Env
     uint32_t m_rxAction;
