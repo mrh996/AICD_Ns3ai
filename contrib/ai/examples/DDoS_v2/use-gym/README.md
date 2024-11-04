@@ -32,7 +32,7 @@ $ python run_ddosim.py
     average_rx_packet_size      # 27 - Average received packet size (B)
 
 
-Please note that the above flow stats (features) are collected per node (node_id >= 0) or per flow (node_id == -1).
+Please note that the above flow stats (features) are collected per node (node_id >= 0) or per flow (node_id == -1) and are sent by ns3 to the OpenGym every time a node has an update.
 
 
 The flow stats per node are stored in the victim_nodes_logs dictionary and can be used to create a graph of the network. Meanwhile, the overall flow stats are stored in the victim_flow_stats dictionary and can be used to provide a more high-level overview of the victim network status. 
