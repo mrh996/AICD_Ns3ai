@@ -17,16 +17,16 @@ namespace ns3 {
 // Structure per each node include a list of flows with related features
 struct FeaturesStruct {
     std::vector<FlowId> flowId;                  // Flow ID
-    std::vector<Time> simTime;
+    std::vector<double> simTime;
     std::vector<uint32_t> srcAddr;               // Source IPv4 address
     std::vector<uint32_t> dstAddr;               // Destination IPv4 address
     std::vector<uint16_t> srcPort;               // Source port
     std::vector<uint16_t> dstPort;               // Destination port
     std::vector<uint8_t> proto;                  // Protocol
-    std::vector<Time> timeFirstTxPacket;
-    std::vector<Time> timeLastTxPacket;
-    std::vector<Time> timeFirstRxPacket;
-    std::vector<Time> timeLastRxPacket;
+    std::vector<double> timeFirstTxPacket;
+    std::vector<double> timeLastTxPacket;
+    std::vector<double> timeFirstRxPacket;
+    std::vector<double> timeLastRxPacket;
     std::vector<uint32_t> txBytes;
     std::vector<uint32_t> rxBytes;
     std::vector<uint32_t> txPackets;

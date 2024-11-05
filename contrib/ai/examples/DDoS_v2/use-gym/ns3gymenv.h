@@ -51,7 +51,7 @@ public:
     // Notify for new stats and retrieve action(s) from the Gym Env (Python)
     uint32_t NotifyGetAction();
     // Send flow stats to the Gym Env (Python)
-    void SetStats(int nodeId, int flowId, FeaturesMap& nodeIdFeaturesMap);
+    void SetStats(int nodeId, int flowId, int flowIndex, FeaturesMap& nodeIdFeaturesMap);
 
 private:
     double m_nodeId;

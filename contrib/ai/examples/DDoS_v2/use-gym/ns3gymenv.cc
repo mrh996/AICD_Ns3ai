@@ -154,7 +154,7 @@ Ns3GymEnv::GetObservation()
     };
     Ptr<OpenGymBoxContainer<double>> box = CreateObject<OpenGymBoxContainer<double>>(shape);
 
-    std::cout << "GetObs nodeId " << m_nodeId << std::endl;
+    std::cout << "GetObs nodeId " << m_nodeId << "  Sim Time " << m_simTime << " s" << std::endl;
 
     box->AddValue(m_nodeId);                // 1 - Node ID (number if info from a node, -1 if overall info of a flow)
     box->AddValue(m_flowId);                // 2 - Flow ID
@@ -248,22 +248,22 @@ Ns3GymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 Generate flow stats
 */
 void
-Ns3GymEnv::SetStats(int nodeId, int flowId, FeaturesMap& featuresMap)
+Ns3GymEnv::SetStats(int nodeId, int flowId, int flowIndex, FeaturesMap& featuresMap)
 {
-    std::cout << "Set stats for nodeid " << nodeId << "   flowid " << flowId << std::endl;
+    std::cout << "Set stats for nodeid " << nodeId << "   flowIndex " << flowIndex << std::endl;
     if (nodeId == -1) {
         /*
         std::cout << std::endl << "nodeId: " << nodeId << " - FlowId: " << featuresMap[flowId].flowId[0]; 
-        std::cout <<  " - Sim Time: "  <<  featuresMap[flowId].simTime[0].GetSeconds();
+        std::cout <<  " - Sim Time: "  <<  featuresMap[flowId].simTime[0];
         std::cout <<  " - Source IP: " <<   featuresMap[flowId].srcAddr[0]; 
         std::cout <<  " - Destination IP: "  <<  featuresMap[flowId].dstAddr[0];
         std::cout <<  " - Source Port: "  <<  featuresMap[flowId].srcPort[0]; 
         std::cout <<  " - Destination Port: "  <<  featuresMap[flowId].dstPort[0];
         std::cout <<  " - Protocol: " <<  static_cast<uint32_t>(featuresMap[flowId].proto[0]);
-        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[flowId].timeFirstTxPacket[0].GetSeconds();
-        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[flowId].timeLastTxPacket[0].GetSeconds();
-        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[flowId].timeFirstRxPacket[0].GetSeconds();
-        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[flowId].timeLastRxPacket[0].GetSeconds();
+        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[flowId].timeFirstTxPacket[0];
+        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[flowId].timeLastTxPacket[0];
+        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[flowId].timeFirstRxPacket[0];
+        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[flowId].timeLastRxPacket[0];
         std::cout <<  " - Tx bytes: "  <<  featuresMap[flowId].txBytes[0]; 
         std::cout <<  " - Rx bytes: " <<  featuresMap[flowId].rxBytes[0]; 
         std::cout <<  " - Tx Packets: " <<  featuresMap[flowId].txPackets[0]; 
@@ -276,16 +276,16 @@ Ns3GymEnv::SetStats(int nodeId, int flowId, FeaturesMap& featuresMap)
         */
         m_nodeId = nodeId;
         m_flowId = flowId;
-        m_simTime = featuresMap[flowId].simTime[0].GetSeconds();                            // 1 - Simulation time (elapsed seconds)
+        m_simTime = featuresMap[flowId].simTime[0];                            // 1 - Simulation time (elapsed seconds)
         m_srcAddr = featuresMap[flowId].srcAddr[0];
         m_dstAddr = featuresMap[flowId].dstAddr[0];                            // 3 - Destination IPv4 address
         m_srcPort = featuresMap[flowId].srcPort[0];                            // 4 - Source port
         m_dstPort = featuresMap[flowId].dstPort[0];                            // 5 - Destination port
         m_proto = featuresMap[flowId].proto[0];                                // 6 - Protocol
-        m_timeFirstTxPacket = featuresMap[flowId].timeFirstTxPacket[0].GetSeconds();
-        m_timeLastTxPacket = featuresMap[flowId].timeLastTxPacket[0].GetSeconds();
-        m_timeFirstRxPacket = featuresMap[flowId].timeFirstRxPacket[0].GetSeconds();
-        m_timeLastRxPacket = featuresMap[flowId].timeLastRxPacket[0].GetSeconds();
+        m_timeFirstTxPacket = featuresMap[flowId].timeFirstTxPacket[0];
+        m_timeLastTxPacket = featuresMap[flowId].timeLastTxPacket[0];
+        m_timeFirstRxPacket = featuresMap[flowId].timeFirstRxPacket[0];
+        m_timeLastRxPacket = featuresMap[flowId].timeLastRxPacket[0];
         m_txBytes = featuresMap[flowId].txBytes[0];                            // 10 - Sent bytes
         m_rxBytes = featuresMap[flowId].rxBytes[0];                            // 11 - Received bytes
         m_txPkts = featuresMap[flowId].txPackets[0];                              // 8 - Sent packets
@@ -298,48 +298,48 @@ Ns3GymEnv::SetStats(int nodeId, int flowId, FeaturesMap& featuresMap)
     }
     else {
         /*
-        std::cout << std::endl << "nodeId: " << nodeId << " - FlowId: " << featuresMap[nodeId].flowId[flowId - 1]; 
-        std::cout <<  " - Sim Time: "  <<  featuresMap[nodeId].simTime[flowId - 1].GetSeconds();
-        std::cout <<  " - Source IP: " <<   featuresMap[nodeId].srcAddr[flowId - 1]; 
-        std::cout <<  " - Destination IP: "  <<  featuresMap[nodeId].dstAddr[flowId - 1];
-        std::cout <<  " - Source Port: "  <<  featuresMap[nodeId].srcPort[flowId - 1]; 
-        std::cout <<  " - Destination Port: "  <<  featuresMap[nodeId].dstPort[flowId - 1];
-        std::cout <<  " - Protocol: " <<  static_cast<uint32_t>(featuresMap[nodeId].proto[flowId - 1]);
-        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[nodeId].timeFirstTxPacket[flowId - 1].GetSeconds();
-        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[nodeId].timeLastTxPacket[flowId - 1].GetSeconds();
-        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[nodeId].timeFirstRxPacket[flowId - 1].GetSeconds();
-        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[nodeId].timeLastRxPacket[flowId - 1].GetSeconds();
-        std::cout <<  " - Tx bytes: "  <<  featuresMap[nodeId].txBytes[flowId - 1]; 
-        std::cout <<  " - Rx bytes: " <<  featuresMap[nodeId].rxBytes[flowId - 1]; 
-        std::cout <<  " - Tx Packets: " <<  featuresMap[nodeId].txPackets[flowId - 1]; 
-        std::cout <<  " - Rx Packets: "  <<  featuresMap[nodeId].rxPackets[flowId - 1]; 
-        std::cout <<  " - Forwarded Packets: " <<  featuresMap[nodeId].forwardedPackets[flowId - 1]; 
-        std::cout <<  " - Dropped Packets: " <<  featuresMap[nodeId].droppedPackets[flowId - 1]; 
-        std::cout <<  " - Delay: "  <<  featuresMap[nodeId].delaySum[flowId - 1]; 
-        std::cout <<  " - Jitter: " <<  featuresMap[nodeId].jitterSum[flowId - 1];
-        std::cout <<  " - LastDelay: "  <<  featuresMap[nodeId].lastDelay[flowId - 1];
+        std::cout << std::endl << "nodeId: " << nodeId << " - FlowId: " << featuresMap[nodeId].flowId[flowIndex]; 
+        std::cout <<  " - Sim Time: "  <<  featuresMap[nodeId].simTime[flowIndex];
+        std::cout <<  " - Source IP: " <<   featuresMap[nodeId].srcAddr[flowIndex]; 
+        std::cout <<  " - Destination IP: "  <<  featuresMap[nodeId].dstAddr[flowIndex];
+        std::cout <<  " - Source Port: "  <<  featuresMap[nodeId].srcPort[flowIndex]; 
+        std::cout <<  " - Destination Port: "  <<  featuresMap[nodeId].dstPort[flowIndex];
+        std::cout <<  " - Protocol: " <<  static_cast<uint32_t>(featuresMap[nodeId].proto[flowIndex]);
+        std::cout <<  " - timeFirstTxPacket: " <<  featuresMap[nodeId].timeFirstTxPacket[flowIndex];
+        std::cout <<  " - timeLastTxPacket: " <<  featuresMap[nodeId].timeLastTxPacket[flowIndex];
+        std::cout <<  " - timeFirstRxPacket: " <<  featuresMap[nodeId].timeFirstRxPacket[flowIndex];
+        std::cout <<  " - timeLastRxPacket: "  <<  featuresMap[nodeId].timeLastRxPacket[flowIndex];
+        std::cout <<  " - Tx bytes: "  <<  featuresMap[nodeId].txBytes[flowIndex]; 
+        std::cout <<  " - Rx bytes: " <<  featuresMap[nodeId].rxBytes[flowIndex]; 
+        std::cout <<  " - Tx Packets: " <<  featuresMap[nodeId].txPackets[flowIndex]; 
+        std::cout <<  " - Rx Packets: "  <<  featuresMap[nodeId].rxPackets[flowIndex]; 
+        std::cout <<  " - Forwarded Packets: " <<  featuresMap[nodeId].forwardedPackets[flowIndex]; 
+        std::cout <<  " - Dropped Packets: " <<  featuresMap[nodeId].droppedPackets[flowIndex]; 
+        std::cout <<  " - Delay: "  <<  featuresMap[nodeId].delaySum[flowIndex]; 
+        std::cout <<  " - Jitter: " <<  featuresMap[nodeId].jitterSum[flowIndex];
+        std::cout <<  " - LastDelay: "  <<  featuresMap[nodeId].lastDelay[flowIndex];
         */
         m_nodeId = nodeId;
-        m_flowId = flowId;
-        m_simTime = featuresMap[nodeId].simTime[flowId - 1].GetSeconds();                            // 1 - Simulation time (elapsed seconds)
-        m_srcAddr = featuresMap[nodeId].srcAddr[flowId - 1];
-        m_dstAddr = featuresMap[nodeId].dstAddr[flowId - 1];                            // 3 - Destination IPv4 address
-        m_srcPort = featuresMap[nodeId].srcPort[flowId - 1];                            // 4 - Source port
-        m_dstPort = featuresMap[nodeId].dstPort[flowId - 1];                            // 5 - Destination port
-        m_proto = featuresMap[nodeId].proto[flowId - 1];                                // 6 - Protocol
-        m_timeFirstTxPacket = featuresMap[nodeId].timeFirstTxPacket[flowId - 1].GetSeconds();
-        m_timeLastTxPacket = featuresMap[nodeId].timeLastTxPacket[flowId - 1].GetSeconds();
-        m_timeFirstRxPacket = featuresMap[nodeId].timeFirstRxPacket[flowId - 1].GetSeconds();
-        m_timeLastRxPacket = featuresMap[nodeId].timeLastRxPacket[flowId - 1].GetSeconds();
-        m_txBytes = featuresMap[nodeId].txBytes[flowId - 1];                            // 10 - Sent bytes
-        m_rxBytes = featuresMap[nodeId].rxBytes[flowId - 1];                            // 11 - Received bytes
-        m_txPkts = featuresMap[nodeId].txPackets[flowId - 1];                              // 8 - Sent packets
-        m_rxPkts = featuresMap[nodeId].rxPackets[flowId - 1];                              // 9 - Received packets
-        m_forwardedPackets = featuresMap[nodeId].forwardedPackets[flowId - 1];
-        m_droppedPackets = featuresMap[nodeId].droppedPackets[flowId - 1];
-        m_delaySum = featuresMap[nodeId].delaySum[flowId - 1];
-        m_jitterSum = featuresMap[nodeId].jitterSum[flowId - 1];
-        m_lastDelay = featuresMap[nodeId].lastDelay[flowId - 1];
+        m_flowId = featuresMap[nodeId].flowId[flowIndex];
+        m_simTime = featuresMap[nodeId].simTime[flowIndex];                            // 1 - Simulation time (elapsed seconds)
+        m_srcAddr = featuresMap[nodeId].srcAddr[flowIndex];
+        m_dstAddr = featuresMap[nodeId].dstAddr[flowIndex];                            // 3 - Destination IPv4 address
+        m_srcPort = featuresMap[nodeId].srcPort[flowIndex];                            // 4 - Source port
+        m_dstPort = featuresMap[nodeId].dstPort[flowIndex];                            // 5 - Destination port
+        m_proto = featuresMap[nodeId].proto[flowIndex];                                // 6 - Protocol
+        m_timeFirstTxPacket = featuresMap[nodeId].timeFirstTxPacket[flowIndex];
+        m_timeLastTxPacket = featuresMap[nodeId].timeLastTxPacket[flowIndex];
+        m_timeFirstRxPacket = featuresMap[nodeId].timeFirstRxPacket[flowIndex];
+        m_timeLastRxPacket = featuresMap[nodeId].timeLastRxPacket[flowIndex];
+        m_txBytes = featuresMap[nodeId].txBytes[flowIndex];                            // 10 - Sent bytes
+        m_rxBytes = featuresMap[nodeId].rxBytes[flowIndex];                            // 11 - Received bytes
+        m_txPkts = featuresMap[nodeId].txPackets[flowIndex];                              // 8 - Sent packets
+        m_rxPkts = featuresMap[nodeId].rxPackets[flowIndex];                              // 9 - Received packets
+        m_forwardedPackets = featuresMap[nodeId].forwardedPackets[flowIndex];
+        m_droppedPackets = featuresMap[nodeId].droppedPackets[flowIndex];
+        m_delaySum = featuresMap[nodeId].delaySum[flowIndex];
+        m_jitterSum = featuresMap[nodeId].jitterSum[flowIndex];
+        m_lastDelay = featuresMap[nodeId].lastDelay[flowIndex];
     }
 
     // Generate advanced features
