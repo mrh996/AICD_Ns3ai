@@ -7,7 +7,7 @@ Network nodes:
  *  Firewall (n1) is the victim router/firewall
  *  S1-S2 (n2-n3) are victim servers
  *  W1-W8 (n4-n11) are victim workstations
- *  Router (n12) is the Internet entry point (e.g. ISP)
+ *  Internet Router (n12) is the Internet entry point (e.g. ISP)
  *  B0-Bn (n13-n22) are bots DDoS-ing the victim network, where n=10
  *  C0-Cm (n23-n24) are legitimate users, communicating with servers S1 and S2 (data servers), where m=4
 
@@ -66,8 +66,11 @@ It is important to note that a flow has a unique ID (starting from 1), and it is
  - Source port of the transport protocol (TCP or UDP)
  - Destination port of the transport protocol (TCP or UDP)
  - Transport protocol number (TCP==6 or UDP==17)
- 
 
-Example for Node 0:
+
+It is also important to note that packets generated in a flow pass through two (source and destination nodes) or more nodes (intermediate nodes). For example, stats about flow with ID 1 will be updated by C0 (source node), Internet Router, Victim Router/FW and Victim SW (intermediate nodes), and S1 (destination node).
+
+
+Examples:
  - Flow ID 1 (10.0.1.2 - 10.1.2.2 - 49152 - 9000 - 6)
  - Flow ID 2 (10.0.3.2 - 10.1.2.3 - 49153 - 9000 - 6)
