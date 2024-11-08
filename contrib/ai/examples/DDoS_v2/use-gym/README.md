@@ -8,19 +8,19 @@ Network nodes:
  *  S1-S2 (n2-n3) are victim servers
  *  W1-W8 (n4-n11) are victim workstations
  *  Internet Router (n12) is the Internet entry point (e.g. ISP)
- *  B0-Bn (n13-n22) are bots DDoS-ing the victim network, where n=10
- *  C0-Cm (n23-n24) are legitimate users, communicating with servers S1 and S2 (data servers), where m=4
+ *  B1-Bn (n13-n22) are bots DDoS-ing the victim network, where n=10
+ *  C1-Cm (n23-n26) are legitimate users, communicating with servers S1 and S2 (data servers), where m=4
 
 Simulation (start after X simulation seconds, stop after X simulation seconds) - note that MAX_SIMULATION_TIME = 10.0 (s):
- *  C0 establishes a TCP connection with S1 (0.1 s, MAX_SIMULATION_TIME - 5 s)
- *  C1 establishes a TCP connection with S1 (1.0 s, MAX_SIMULATION_TIME - 5 s)
+ *  C1 establishes a TCP connection with S1 (0.1 s, MAX_SIMULATION_TIME - 5 s)
+ *  C2 establishes a TCP connection with S1 (1.0 s, MAX_SIMULATION_TIME - 5 s)
  *  W1 establishes a TCP connection with S1 (2.0 s, 5.0 s)
  *  W2 establishes a TCP connection with S1 (3.0 s, 6.0 s)
- *  C2 establishes a TCP connection with S2 (0.1 s, MAX_SIMULATION_TIME - 5 s)
- *  C3 establishes a TCP connection with S2 (1.0 s, MAX_SIMULATION_TIME - 5 s)
+ *  C3 establishes a TCP connection with S2 (0.1 s, MAX_SIMULATION_TIME - 5 s)
+ *  C4 establishes a TCP connection with S2 (1.0 s, MAX_SIMULATION_TIME - 5 s)
  *  W3 establishes a TCP connection with S2 (2.0 s, 5.0 s)
  *  W4 establishes a TCP connection with S2 (3.0 s, 6.0 s)
- *  B0-B10 establish UDP connections with S1 (when required, MAX_SIMULATION_TIME - 1 s)
+ *  B1-B10 establish UDP connections with S1 (when required, MAX_SIMULATION_TIME - 1 s)
 
 $ python run_ddosim.py
 
