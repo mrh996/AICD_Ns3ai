@@ -758,7 +758,7 @@ int main (int argc, char *argv[])
     // Monitor the flow(s) and export stats to XML
     FlowMonitorHelper flowmonHelper;
     monitor = flowmonHelper.InstallAll();
-    monitor->SerializeToXmlFile("flowmonitor.xml", true, true);
+    
     classifier = DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
 
     // Attach the callback to trace packets passing through the nodes within the victim network
@@ -778,7 +778,13 @@ int main (int argc, char *argv[])
     // Monitor overall flow stats per second
     Monitor();
 
+    // Ensures the simulator stops eventually
+    Simulator::Stop(Seconds(MAX_SIMULATION_TIME + 5));
     Simulator::Run();
+    
+    monitor->SerializeToXmlFile("flowmonitor.xml", true, true);
+    openGymInterface->NotifySimulationEnd();
+    
     Simulator::Destroy();
     return 0;
 }
