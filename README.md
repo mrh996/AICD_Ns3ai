@@ -57,11 +57,15 @@ or
 
 $ cd contrib/ai/examples/DDoS_v2/use-gym/
 
-## Train a RL agent to form DDoS attack
+## Train a dummy RL agent to form DDoS attack
 
 python run_ddos_rl_attack.py
 or
 run_ddosim.py
+
+## Train a Transformer-based RL agent to defend DDoS attack
+$ cd contrib/ai/examples/DDoS_v2/Transformer-RL/
+python run_ddosim_TiT.py
 
 
 
