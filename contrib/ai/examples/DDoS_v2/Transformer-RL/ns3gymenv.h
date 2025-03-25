@@ -51,7 +51,7 @@ public:
     // Notify for new stats and retrieve action(s) from the Gym Env (Python)
     uint32_t NotifyGetAction();
     // Send flow stats to the Gym Env (Python)
-    void SetStats(AggregateFeatures& agg, bool isSuspiciousListEmpty);
+    void SetStats(AggregateFeatures& agg, bool isSuspiciousListEmpty, bool testSuspiciousSuccess, bool promoteBlackSuccess);
     // void SetStats(int nodeId, int flowId, int flowIndex, FeaturesMap& nodeIdFeaturesMap, bool isBlack);
     // get white list
     std::set<int>& GetWhitelist();
@@ -116,7 +116,15 @@ private:
     double m_aggThroughput;         // Aggregate throughput (Mbps)
     double m_aggPdr;                // Aggregate packet delivery ratio
     double m_aggPlr;                // Aggregate packet loss ratio
+    double m_lastplr;
     bool m_isSuspiciousListEmpty;
+    bool m_testSuspiciousSuccess;
+    bool m_promoteBlackSuccess;
+    uint32_t m_observe_time;
+    uint32_t m_timeStep;
+    uint32_t m_totalActions;
+    uint32_t m_successfulDefenses;
+    uint32_t m_NoRemove_time;
 };
 
 } // namespace ns3

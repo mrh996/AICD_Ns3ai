@@ -107,6 +107,15 @@ Ns3GymEnv::Ns3GymEnv ()
     m_aggPlr = 0;                // Aggregate packet loss ratio
     m_timeWindow = 0.05;         // Time window
     m_isSuspiciousListEmpty = true; // Flag indicating if suspicious list is empty
+    m_testSuspiciousSuccess = false;
+    m_promoteBlackSuccess = false;
+    
+    m_lastplr = 0.0;
+    m_observe_time = 0;
+    m_timeStep = 0;
+    m_totalActions = 0;
+    m_successfulDefenses = 0;
+    m_NoRemove_time = 0;
 }
 
 std::set<int>& 
@@ -175,7 +184,7 @@ Ns3GymEnv::GetGameOver()
     NS_LOG_FUNCTION (this);
 
     // Set the game over condition based on cumulative reward
-    bool isGameOver = (m_cumulativeReward >= 40000);
+    bool isGameOver = (m_cumulativeReward >= 200000);
 
     if (isGameOver)
     {
@@ -213,58 +222,139 @@ Ns3GymEnv::GetObservation()
     box->AddValue(m_aggJitterInc);          // 9 - Average jitter increment
     box->AddValue(m_aggThroughput);         // 10 - Aggregate throughput
     box->AddValue(m_aggPdr);                // 11 - Aggregate packet delivery ratio
-    box->AddValue(m_aggPlr);                // 11 - Aggregate packet loss ratio
+    box->AddValue(m_aggPlr);                // 12 - Aggregate packet loss ratio
     NS_LOG_UNCOND ("Ns3GetObservation (Aggregate): " << box);
     return box;
 }
 
 
-float
-Ns3GymEnv::GetReward()
-{
+
+float Ns3GymEnv::GetReward() {
     NS_LOG_FUNCTION(this);
     float reward = 0.0;
-    // Check if entered a new time window
-    if (m_simTime > m_lastRewardTime) {
-        bool isNetworkNormal = (m_aggPlr == 0); // Check if network is normal
-        if (isNetworkNormal) {
-            // Reward mechanism when network is normal
-            if (m_defendtype == 0) {
-                reward += 30.0; // Encourage taking Action 0
-                std::cout << "Network normal, action 0 encouraged" << std::endl;
-            } else if (m_defendtype == 2 && !m_isSuspiciousListEmpty) {
-                reward += 60.0; // Encourage testing addresses in suspicious list
-                std::cout << "Network normal, action 2 encouraged to test SuspiciousList" << std::endl;
-            } else {
-                reward -= 100.0; // Penalize other unnecessary actions
-                std::cout << "Network normal, unnecessary action penalized" << std::endl;
-            }
-        } else {
-            // Reward mechanism when network is abnormal
-            if (m_defendtype == 1) {
-                reward += 60.0; // Encourage adding address with highest suspicious score to suspicious list
-                std::cout << "Network abnormal, action 1 encouraged to address SuspiciousList" << std::endl;
-            } else if (m_defendtype == 3) {
-                reward += 30.0; // Encourage promoting addresses from suspicious list to blacklist
-                std::cout << "Network abnormal, action 3 encouraged to address Blacklist" << std::endl;
-            } else {
-                reward -= 200.0; // Penalize inappropriate actions
-                std::cout << "Network abnormal, inappropriate action penalized" << std::endl;
-            }
+    const uint32_t OBSERVE_THRESHOLD = 3;
+    const uint32_t REMOVE_THRESHOLD = 3;
+    const float BASE_REWARD = 100.0;
+    
+    // track rewards/penalties
+    float normalStateBaseReward = 0.0;
+    float attackStateBasePenalty = 0.0;
+    float observePenalty = 0.0;
+    float addRewardPenalty = 0.0;
+    float removeRewardPenalty = 0.0;
+    float noRemovePenalty = 0.0;
+    float promoteRewardPenalty = 0.0;
+    
+    // network state
+    bool isNormalState = (m_aggFlowCount > 0) ? (m_aggPlr <= 0.1) : false;
+    bool isAttackState = !isNormalState;
+    
+    // 处理观察行为
+    if (m_defendtype == 0) {
+        m_observe_time += 1;
+        if (m_observe_time > OBSERVE_THRESHOLD) {
+            observePenalty = ((m_observe_time / OBSERVE_THRESHOLD) + 1) * 2 * BASE_REWARD;
+            reward -= observePenalty;
         }
-        // Basic performance metric rewards
-        if (m_aggPlr < 0.1) {
-            reward += 200.0; // Additional reward for low PLR
-        } else {
-            reward -= 200.0; // Penalty for high PLR
-        }
-        // Update timestamp of last reward calculation
-        m_lastRewardTime = m_simTime;
-        // Update cumulative reward
-        m_cumulativeReward += reward;
-        // Print reward information
-        NS_LOG_UNCOND("GetReward: " << reward << ", CumulativeReward: " << m_cumulativeReward);
+    } else {
+        m_observe_time = 0;
     }
+    
+    if (isNormalState) {
+        m_successfulDefenses++;
+        normalStateBaseReward = ((m_successfulDefenses / 5) + 1) * BASE_REWARD;
+        reward += normalStateBaseReward;
+        
+        // reward/penalty for specific actions
+        if (m_defendtype == 1) {
+            addRewardPenalty = -3 * BASE_REWARD;
+            reward += addRewardPenalty;
+        } 
+        
+        if (m_defendtype == 2) {
+            if (m_testSuspiciousSuccess) {
+                removeRewardPenalty = 3 * BASE_REWARD;
+                reward += removeRewardPenalty;
+            }
+            m_NoRemove_time = 0;
+        } else {
+            if (!m_isSuspiciousListEmpty && m_NoRemove_time > REMOVE_THRESHOLD) {               
+                noRemovePenalty = ((m_NoRemove_time / REMOVE_THRESHOLD) + 1) * BASE_REWARD;
+                reward -= noRemovePenalty;
+            }
+            m_NoRemove_time++; 
+        }
+        
+        if (m_defendtype == 3 && m_promoteBlackSuccess) {
+            promoteRewardPenalty = 10 * BASE_REWARD;
+            reward += promoteRewardPenalty;
+        }
+        
+        std::cout << "Current state is Normal, successful defenses: " << m_successfulDefenses << std::endl;
+    } else {
+        m_successfulDefenses = 0;
+        
+        attackStateBasePenalty = -2 * BASE_REWARD;
+        reward += attackStateBasePenalty;
+        
+        if (m_defendtype == 1) {
+            addRewardPenalty = 3 * BASE_REWARD;
+            reward += addRewardPenalty;
+        } else {
+            addRewardPenalty = -5 * BASE_REWARD;
+            reward += addRewardPenalty;
+        }
+        
+        std::cout << "Current state is Under Attack, PLR: " << m_aggPlr << " PDR: " << m_aggPdr << std::endl; 
+    }
+    
+
+    
+    // update state
+    m_cumulativeReward += reward;
+    m_timeStep++;
+    
+    // log output
+    std::cout << "GetReward: " << reward 
+                << ", CumulativeReward: " << m_cumulativeReward 
+                << ", ObserveTime: " << m_observe_time 
+                << ", NoRemoveTime: " << m_NoRemove_time 
+                << ", PLR: " << m_aggPlr
+                << ", PDR: " << m_aggPdr
+                << ", TimeStep: " << m_timeStep << std::endl;
+    
+    std::cout << "Reward Breakdown: ";
+    if (isNormalState) {
+        std::cout << "Normal state base: " << normalStateBaseReward;
+    } else {
+        std::cout << "Attack state base: " << attackStateBasePenalty;
+    }
+    
+    if (observePenalty != 0) {
+        std::cout << ", Observe penalty: " << -observePenalty;
+    }
+    
+    if (addRewardPenalty != 0) {
+        std::cout << ", Add action: " << addRewardPenalty;
+    }
+    
+    if (removeRewardPenalty != 0) {
+        std::cout << ", Remove action: " << removeRewardPenalty;
+    }
+    
+    if (noRemovePenalty != 0) {
+        std::cout << ", No remove penalty: " << -noRemovePenalty;
+    }
+    
+    if (promoteRewardPenalty != 0) {
+        std::cout << ", Promote action: " << promoteRewardPenalty;
+    }
+    
+    
+    std::cout << std::endl;
+    
+    NS_LOG_UNCOND("GetReward: " << reward << ", CumulativeReward: " << m_cumulativeReward);
+    
     return reward;
 }
 
@@ -288,7 +378,7 @@ Ns3GymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
     Ptr<OpenGymDiscreteContainer> discrete = DynamicCast<OpenGymDiscreteContainer>(action);
     uint32_t defendType = discrete->GetValue();
     m_rxAction = defendType;
-    // std::cout << "m_rxAction: " << m_rxAction << std::endl;
+    std::cout << "Execute action: m_rxAction: " << m_rxAction << std::endl;
     // Execute corresponding operation based on action type
     switch (m_rxAction) {
         case 0:
@@ -326,9 +416,11 @@ Ns3GymEnv::ExecuteActions(Ptr<OpenGymDataContainer> action)
 Set aggregated network statistics
 */
 void
-Ns3GymEnv::SetStats(AggregateFeatures& agg, bool isSuspiciousListEmpty)
+Ns3GymEnv::SetStats(AggregateFeatures& agg, bool isSuspiciousListEmpty, bool testSuspiciousSuccess, bool promoteBlackSuccess)
 {
     m_isSuspiciousListEmpty = isSuspiciousListEmpty;
+    m_testSuspiciousSuccess = testSuspiciousSuccess;
+    m_promoteBlackSuccess = promoteBlackSuccess; 
     // Store aggregate statistics in member variables
     m_aggFlowCount = agg.flowCount;
     m_simTime = agg.simTime;
@@ -363,6 +455,9 @@ Ns3GymEnv::SetStats(AggregateFeatures& agg, bool isSuspiciousListEmpty)
         if (m_aggTxPacketsInc > 0) {
             m_aggPdr = static_cast<double>(m_aggRxPacketsInc) / m_aggTxPacketsInc;
             m_aggPlr = static_cast<double>(m_aggDroppedInc) / m_aggTxPacketsInc;
+        } else { // test in 0320?
+            m_aggPdr = 0;
+            m_aggPlr = 0;
         }
     } else {
         m_aggThroughput = 0;

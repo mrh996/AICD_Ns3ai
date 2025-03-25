@@ -70,6 +70,8 @@ struct SourceBehaviorStats {
     double activeRatio;            // Active ratio
     uint32_t totalTxBytes;         // Total transmitted bytes
     uint32_t totalTxPackets;       // Total transmitted packets
+    uint32_t totalRxBytes;         // Total transmitted bytes
+    uint32_t totalRxPackets;       // Total transmitted packets
     uint32_t totalDroppedPackets;  // Total dropped packets
     double avgSendRate;            // Average sending rate (bytes/s)
     double firstSeenTime;          // Time first seen

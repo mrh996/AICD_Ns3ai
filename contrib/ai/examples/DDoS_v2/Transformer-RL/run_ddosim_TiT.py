@@ -14,10 +14,12 @@ import os
 import random
 import numpy as np
 from utils import linear_schedule, update_args, load_policy_kwargs
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 PROCNAME = "/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/ns3.41-ns3ai_ddos_gym-debug"
 
-# python run_ddosim_TiT.py > /LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/use-gym/simulation_TiT.log
+# python run_ddosim_TiT.py > /LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/use-gym/new_result/simulation_TiT_train_client30_bot8_simTime6_random_600step.log
 # cd ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/use-gym/
 
 @dataclass
@@ -216,8 +218,8 @@ def make_array_agent(algo, seed, args):
     # print("---info: ", info)
     # check_env(env)
     env = DummyVecEnv([lambda: env])
-    agent = PPO(policy_type, env, verbose=1, learning_rate=0.001, n_steps=5, batch_size=5, 
-                n_epochs=5, gamma=0.99, gae_lambda=0.95, clip_range=0.2, ent_coef=0.0, 
+    agent = PPO(policy_type, env, verbose=1, learning_rate=0.001, n_steps=10, batch_size=5, 
+                n_epochs=1, gamma=0.9, gae_lambda=0.99, clip_range=0.2, ent_coef=0.1, 
                 vf_coef=0.5, max_grad_norm=0.5,
                 tensorboard_log=None, seed=seed, device=device,
                 policy_kwargs=policy_kwargs)
@@ -231,43 +233,45 @@ class GymAgent:
         self.args = args
         self.env_name = args.env_name
         self.n_timesteps = args.n_timesteps
-
+        self.n_test_timesteps = 100
+        
     def get_action(self, obs):
-        action, _states = self.agent.predict(obs, deterministic=True)
+        action, _states = self.agent.predict(obs, deterministic=False)
         # print("Action agent", action, "\n")
         return action
 
     def train(self):
         print('==' * 20, 'policy structure ==>', self.agent.policy)
         print('==' * 20, 'number of parameters: %d' % sum(p.numel() for p in self.agent.policy.parameters()))
-        print('==' * 20, 'observation_space.shape ==>', self.agent.get_env().observation_space.shape)
         # obs = self.env.reset()
         # train agent
+        print("n_timesteps: ", self.n_timesteps)
         self.agent.learn(total_timesteps=self.n_timesteps)
     
     def test(self):    
         # test agent
         obs = self.env.reset()
-        for i in range(5000):
-            action, _states = self.agent.predict(obs, deterministic=True)
-            # print(action)
-            # print(_states)
-            obs, reward, done, info = self.env.step(action)
-            print(f"Testing Step: {i}, Action: {action}, Reward: {reward}, Done: {done}")
-            # print(obs)
-            if done:
-                # obs = self.env.reset()
-                print("Environment signaled done. Exiting test loop.")
-                break  # 退出循环
+        for i in range(1, self.n_test_timesteps + 1):
+            action, _states = self.agent.predict(obs)
+            obs, reward, done, nfo = self.env.step(action)
+            print(f"Testing Step: {i}, Action: {action}, Reward: {reward}, Done: {done}", flush=True)
+            # early stopping
+            if i % self.n_test_timesteps == 0: #done
+                obs = self.env.reset()
+                print("Environment signaled done. Exiting test loop.", flush=True)
+                continue
         self.env.close()
     
     def save_model(self):
-        save_path = self.args.log_folder + self.env_name + '__' + self.args.algo + '__' + str(self.seed) + '__running'
+        save_path = self.args.log_folder + self.env_name + '__' + self.args.algo + '__' + str(self.seed) + '__running_client30_bot8_example_0320'
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         self.agent.save(save_path) # model = PPO.load("path/to/your_model.zip")
         
     def load_model(self):
-        self.agent = PPO.load("/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/log/Ns3-v0__enhanced_tit_ppo__42__running.zip")
+        self.agent = PPO.load("/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/log/Ns3-v0__enhanced_tit_ppo__42__running_client30_bot8_0314.zip")
+        
+    def load_model_training(self):
+        self.agent = PPO.load(".zip", env=self.env)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -276,7 +280,7 @@ if __name__ == '__main__':
         choices=['vanilla_tit_ppo', 'enhanced_tit_ppo'])
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--log_folder", type=str, default="/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/log/")
-    parser.add_argument("--n-timesteps", type=int, default=5000)
+    parser.add_argument("--n_timesteps", type=int, default=7000)
     parser.add_argument("--patch-dim", type=int, default=6)
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument("--features-dim", type=int, default=64)
@@ -294,8 +298,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args = update_args(args) 
     agent = GymAgent(args.algo, 42, args)
+    # # agent.load_model_training()
     agent.train()
     agent.save_model()
-    # agent.load_model()
+    agent.load_model()
     agent.test()
    

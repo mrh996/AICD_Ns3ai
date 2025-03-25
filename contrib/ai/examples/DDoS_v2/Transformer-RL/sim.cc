@@ -58,7 +58,7 @@
 #include "ns3/trace-helper.h"
 
 #include "ns3gymenv.h"
-
+#include <random>
 #include <iostream>
 #include <unordered_map>
 #include <string>
@@ -70,13 +70,14 @@
 
 //Experimental parameters
 #define MAX_BULK_BYTES 50000
-#define DDOS_RATE "2048000kb/s"
-#define MAX_SIMULATION_TIME 10.0
+#define DDOS_RATE "204800kb/s"
+// 7 for training, 10.5 for testing
+#define MAX_SIMULATION_TIME 10.5
 
 //Number of bots for DDoS
-#define NUMBER_OF_BOTS 6
+#define NUMBER_OF_BOTS 60
 //Number of legitimate clients
-#define NUMBER_OF_CLIENTS 4
+#define NUMBER_OF_CLIENTS 200
 
 using namespace ns3;
 
@@ -98,13 +99,16 @@ NodeContainer csmaNodesVictim;
 // Nodes for attack bots
 NodeContainer botNodes;
 
+Ipv4InterfaceContainer botInterfaces;  // store the interfaces of the bot nodes
+
 // Used to determine if an attack has been performed
 bool lastAction;
-bool isBlack;
+bool testSuspiciousSuccess = 0;
+bool promoteBlackSuccess = 0;
 std::set<Ipv4Address> BlackList;
 std::map<Ipv4Address, double> SuspiciousList;
 std::map<Ipv4Address, SourceBehaviorStats> sourceBehaviorMap;
-uint32_t totalMonitorCount = 0;        // 总的监控次数
+uint32_t totalMonitorCount = 0;        // total monitor count
 
 bool CustomReceiveCallback(Ptr<NetDevice> device, Ptr<const Packet> packet, uint16_t protocol, const Address &from);
 NS_LOG_COMPONENT_DEFINE("DDoSAttack");
@@ -166,33 +170,49 @@ uint32_t Ipv4AddressToInt(ns3::Ipv4Address address)
 }
 
 void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& sourceBehaviorMap) {
-    // Step 1: 统计当前活跃的源地址及其可疑分数
+    // Step 1: compute suspicious score based on rules
+
+    const double DECAY_RATE = 0.9;  // decay rate
     std::vector<std::pair<Ipv4Address, double>> activeSourceRanking;
+
     for (const auto& [addr, stats] : sourceBehaviorMap) {
         if (stats.isActive) {
             double dropRate = static_cast<double>(stats.totalDroppedPackets) / stats.totalTxPackets;
             double suspiciousScore = (dropRate > 0.1) 
                 ? dropRate * 0.8 + stats.activeRatio 
                 : stats.activeRatio;
+                
             activeSourceRanking.push_back({addr, suspiciousScore});
+            
+            // update the suspicious score for active sources
+            auto it = SuspiciousList.find(addr);
+            if (it != SuspiciousList.end()) {
+                it->second = suspiciousScore;  // update the score
+            }
+        } else {
+            // decay the suspicious score for inactive sources
+            auto it = SuspiciousList.find(addr);
+            if (it != SuspiciousList.end()) {
+                it->second *= DECAY_RATE;  
+            }
         }
     }
 
-    // 按可疑分数从高到低排序
+    // sort by suspicious score
     std::sort(activeSourceRanking.begin(), activeSourceRanking.end(),
               [](const auto& a, const auto& b) { return a.second > b.second; });
 
-    // Step 2: 执行动作逻辑
-    std::string actionDescription;  // 保存动作描述
+    // Step 2: symbolic actions
+    std::string actionDescription;  
     switch (action) {
         case 0: {
-            // 不采取任何行动，静默观察
+            // observe
             actionDescription = "Observe (No action taken)";
             break;
         }
 
         case 1: {
-            // 将当前可疑分数最高的前几个源地址加入可疑名单
+            // add to Suspicious List
             int activeCount = activeSourceRanking.size();
             if (activeCount == 0) {
                 actionDescription = "Add to Suspicious List (No active sources to add)";
@@ -207,6 +227,10 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
 
                 if (BlackList.find(addr) == BlackList.end() && 
                     SuspiciousList.find(addr) == SuspiciousList.end()) {
+                    if (suspiciousScore < 0.2){
+                        std::cout << "\n===== Push Failed due to low suspicious score (< 0.2): " << addr << " =====" << std::endl;
+                        continue; 
+                    }
                     SuspiciousList.insert({addr, suspiciousScore});
                     count++;
                 }
@@ -216,7 +240,7 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
         }
 
         case 2: {
-            // 从可疑名单中移除当前可疑分数最低的源地址
+            // remove from Suspicious List
             if (SuspiciousList.empty()) {
                 actionDescription = "Remove from Suspicious List (List is empty)";
                 break;
@@ -226,30 +250,32 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
             std::sort(suspiciousRanking.begin(), suspiciousRanking.end(),
                       [](const auto& a, const auto& b) { return a.second < b.second; });
 
-            // 获取可疑分数最低的地址
+            // get the address with the lowest suspicious score
             Ipv4Address toRemove = suspiciousRanking.front().first;
             double minSuspiciousScore = suspiciousRanking.front().second;
 
-            // 设置可疑分数移除阈值
+            // set a threshold for removing from the list
             const double suspiciousThreshold = 1.0;
             if (minSuspiciousScore > suspiciousThreshold) {
-                // 可疑分数过高，拒绝移除
+                // refuse to remove
                 std::ostringstream oss;
-                oss << toRemove;  // 格式化 Ipv4Address
+                oss << toRemove;  
                 actionDescription = "Failed to remove from Suspicious List (Address: " + oss.str() + ", Score too high: " + std::to_string(minSuspiciousScore) + ")";
+                testSuspiciousSuccess = 0;
                 break;
             }
 
-            // 可疑分数低于阈值，移除该地址
+            // remove from Suspicious List
             SuspiciousList.erase(toRemove);
+            testSuspiciousSuccess = 1;
             std::ostringstream oss;
-            oss << toRemove;  // 格式化 Ipv4Address
+            oss << toRemove;  
             actionDescription = "Remove from Suspicious List (Address: " + oss.str() + ", Score: " + std::to_string(minSuspiciousScore) + ")";
             break;
         }
 
         case 3: {
-            // 将满足条件的源从可疑名单提升到黑名单
+            // promote to blacklist
             std::vector<Ipv4Address> toPromote;
 
             for (const auto& [addr, suspiciousScore] : SuspiciousList) {
@@ -268,6 +294,9 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
 
                 if (condition1 || condition2) {
                     toPromote.push_back(addr);
+                    promoteBlackSuccess = 1;
+                } else {
+                    promoteBlackSuccess = 0;
                 }
             }
 
@@ -275,18 +304,50 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
                 BlackList.insert(addr);
                 SuspiciousList.erase(addr);
             }
+            
+            ApplicationContainer newContainer;
+            for (int k = 0; k < NUMBER_OF_BOTS; ++k) {
+                Ptr<Node> node = botNodes.Get(k);
+
+                // get Bot IP
+                Ipv4Address botIp = botInterfaces.GetAddress(k);
+                std::cout << "[INFO] Checking bot " << k << " with IP: " << botIp << std::endl;
+
+                // Check if the bot is in the blacklist
+                if (BlackList.find(botIp) != BlackList.end()) {
+                    std::cout << "Blacklisted bot detected: " << botIp << std::endl;
+
+                    // get OnOffApplication
+                    Ptr<Application> app = node->GetApplication(0);
+                    Ptr<OnOffApplication> onOffApp = DynamicCast<OnOffApplication>(app);
+
+                    if (onOffApp) {
+                        std::cout << "Stopping attack from bot: " << botIp << std::endl;
+                        
+                        // stop OnOffApplication
+                        newContainer.Add(onOffApp);
+                        newContainer.Stop(Seconds(Simulator::Now().GetSeconds() + 0.1));
+
+                        std::cout << "Attack stopped for bot with IP " << botIp << std::endl;
+                    } else {
+                        std::cout << "Failed to retrieve OnOffApplication for bot: " << botIp << std::endl;
+                    }
+                }
+            }
+
+
+
             actionDescription = "Promote to Blacklist (" + std::to_string(toPromote.size()) + " sources promoted)";
             break;
         }
 
         default: {
-            // 无效的action，什么都不做
             actionDescription = "Invalid Action";
             break;
         }
     }
 
-    // Step 3: 打印当前动作和名单状态
+    // Step 3: print
     std::cout << "\n===== Action Taken: " << actionDescription << " =====" << std::endl;
 
     std::cout << "\n===== Current Suspicious List =====" << std::endl;
@@ -302,6 +363,409 @@ void ApplyAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& so
     std::cout << "====================================\n" << std::endl;
 }
 
+void ApplyLLMAction(uint32_t action, std::map<Ipv4Address, SourceBehaviorStats>& sourceBehaviorMap) {
+    // Step 1: compute suspicious score based on rules with adaptive parameters
+    
+    // Adaptive decay rate based on network size and activity
+    const double BASE_DECAY_RATE = 0.9;
+    double activeSourceCount = 0;
+    for (const auto& [addr, stats] : sourceBehaviorMap) {
+        if (stats.isActive) activeSourceCount++;
+    }
+    
+    // Adjust decay rate based on network activity - slower decay in high-activity environments
+    const double DECAY_RATE = std::max(0.7, BASE_DECAY_RATE - (activeSourceCount / 500.0));
+    
+    // Dynamic suspicious score threshold that adapts to environment scale
+    const double BASE_SUSPICIOUS_THRESHOLD = 0.2;
+    const double SUSPICIOUS_THRESHOLD = BASE_SUSPICIOUS_THRESHOLD * (1.0 - std::min(0.5, activeSourceCount / 300.0));
+    
+    // Activity window adjustment - shorter window for larger environments to enable faster reaction
+    const double TIME_THRESHOLD = std::max(1.0, 2.0 * (1.0 - std::min(0.5, activeSourceCount / 300.0)));
+    
+    std::vector<std::pair<Ipv4Address, double>> activeSourceRanking;
+    
+    // Enhanced suspicious score calculation with weighted packet drop rate
+    for (const auto& [addr, stats] : sourceBehaviorMap) {
+        if (stats.isActive) {
+            // More sophisticated drop rate calculation with packet volume consideration
+            double dropRate = static_cast<double>(stats.totalDroppedPackets) / std::max(1.0, static_cast<double>(stats.totalTxPackets));
+            double packetVolumeFactor = std::min(1.0, stats.totalTxPackets / 1000.0); // Normalize large packet volumes
+            
+            // Weighted suspicious score calculation with rate limiting factor
+            double suspiciousScore = 0.0;
+            if (dropRate > 0.1) {
+                // High drop rate sources
+                suspiciousScore = (dropRate * 0.7) + 
+                                 (stats.activeRatio * 0.2) + 
+                                 (packetVolumeFactor * 0.1);
+            } else {
+                // Low drop rate sources - focus more on activity patterns
+                suspiciousScore = (stats.activeRatio * 0.8) + 
+                                 (packetVolumeFactor * 0.2);
+            }
+            
+            activeSourceRanking.push_back({addr, suspiciousScore});
+            
+            // Update the suspicious score for active sources with exponential moving average
+            auto it = SuspiciousList.find(addr);
+            if (it != SuspiciousList.end()) {
+                // Apply EMA to smooth score updates
+                const double ALPHA = 0.3; // EMA factor
+                it->second = (ALPHA * suspiciousScore) + ((1.0 - ALPHA) * it->second);
+            }
+        } else {
+            // Decay the suspicious score for inactive sources
+            auto it = SuspiciousList.find(addr);
+            if (it != SuspiciousList.end()) {
+                it->second *= DECAY_RATE;
+                
+                // Remove from suspicious list if score decays below removal threshold
+                if (it->second < 0.05) {
+                    SuspiciousList.erase(it);
+                }
+            }
+        }
+    }
+    
+    // Sort by suspicious score
+    std::sort(activeSourceRanking.begin(), activeSourceRanking.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+    
+    // Step 2: symbolic actions with improved logic
+    std::string actionDescription;
+    switch (action) {
+        case 0: {
+            // Observe - now with proactive intelligence gathering
+            // Track suspicious patterns even during observation
+            if (!activeSourceRanking.empty() && activeSourceRanking.front().second > 0.8) {
+                // Auto-flag extremely suspicious sources during observation
+                const auto& [addr, score] = activeSourceRanking.front();
+                if (BlackList.find(addr) == BlackList.end() && 
+                    SuspiciousList.find(addr) == SuspiciousList.end()) {
+                    SuspiciousList.insert({addr, score});
+                    actionDescription = "Observe with Auto-Flag (1 source flagged due to high score: " + 
+                                      std::to_string(score) + ")";
+                } else {
+                    actionDescription = "Observe (No action taken)";
+                }
+            } else {
+                actionDescription = "Observe (No action taken)";
+            }
+            break;
+        }
+        
+        case 1: {
+            // Add to Suspicious List with improved selection criteria
+            int activeCount = activeSourceRanking.size();
+            if (activeCount == 0) {
+                actionDescription = "Add to Suspicious List (No active sources to add)";
+                break;
+            }
+            
+            // Scale number to add based on environment size
+            int numToAdd = std::max(1, std::min(activeCount / 3, 30)); // Cap at 10 to prevent list explosion
+            int count = 0;
+            
+            // Track suspicious behaviors individually
+            std::vector<std::string> addedDetails;
+            
+            for (const auto& [addr, suspiciousScore] : activeSourceRanking) {
+                if (count >= numToAdd) break;
+                
+                if (BlackList.find(addr) == BlackList.end() && 
+                    SuspiciousList.find(addr) == SuspiciousList.end()) {
+                    
+                    // Apply dynamic threshold based on network activity
+                    if (suspiciousScore < SUSPICIOUS_THRESHOLD) {
+                        std::cout << "\n===== Push Failed due to low suspicious score (< " << 
+                                SUSPICIOUS_THRESHOLD << "): " << addr << " =====" << std::endl;
+                        continue;
+                    }
+                    
+                    // Add to suspicious list with current score
+                    SuspiciousList.insert({addr, suspiciousScore});
+                    
+                    // Create log entry for this addition
+                    std::ostringstream logEntry;
+                    logEntry << addr << " (score: " << suspiciousScore << ")";
+                    addedDetails.push_back(logEntry.str());
+                    
+                    count++;
+                }
+            }
+            
+            actionDescription = "Add to Suspicious List (" + std::to_string(count) + " sources added)";
+            
+            // Log detailed information about additions
+            if (!addedDetails.empty()) {
+                std::cout << "\n===== Added to Suspicious List =====" << std::endl;
+                for (const auto& detail : addedDetails) {
+                    std::cout << "  - " << detail << std::endl;
+                }
+            }
+            
+            break;
+        }
+        
+        case 2: {
+            // Remove from Suspicious List with improved criteria
+            if (SuspiciousList.empty()) {
+                actionDescription = "Remove from Suspicious List (List is empty)";
+                break;
+            }
+            
+            // Enhanced prioritization for removal
+            std::vector<std::pair<Ipv4Address, double>> removalCandidates;
+            
+            // Identify sources to potentially remove
+            for (const auto& [addr, suspiciousScore] : SuspiciousList) {
+                auto it = sourceBehaviorMap.find(addr);
+                
+                if (it == sourceBehaviorMap.end()) {
+                    // Source no longer exists in behavior map - likely disappeared
+                    removalCandidates.push_back({addr, -1.0}); // Priority removal
+                    continue;
+                }
+                
+                const auto& stats = it->second;
+                
+                // If inactive for a while, prioritize for removal
+                if (!stats.isActive) {
+                    double inactiveTime = Simulator::Now().GetSeconds() - stats.lastSeenTime;
+                    if (inactiveTime > 5.0) {
+                        removalCandidates.push_back({addr, 0.0}); // Inactive removal
+                        continue;
+                    }
+                }
+                
+                // Low suspicious score sources
+                if (suspiciousScore < 0.3) {
+                    removalCandidates.push_back({addr, suspiciousScore});
+                }
+            }
+            
+            // If we have candidates for removal
+            if (!removalCandidates.empty()) {
+                // Sort by score (lowest first, missing/inactive prioritized)
+                std::sort(removalCandidates.begin(), removalCandidates.end(),
+                        [](const auto& a, const auto& b) { return a.second < b.second; });
+                
+                // Get up to 3 addresses with the lowest suspicious score
+                int removeCount = std::min(static_cast<int>(removalCandidates.size()), 10);
+                std::vector<std::string> removedDetails;
+                
+                for (int i = 0; i < removeCount; i++) {
+                    Ipv4Address toRemove = removalCandidates[i].first;
+                    double score = removalCandidates[i].second;
+                    
+                    // Skip if score is above threshold and not missing/inactive
+                    if (score > 0.6 && score != -1.0 && score != 0.0) {
+                        continue;
+                    }
+                    
+                    // Generate removal reason string
+                    std::string reason;
+                    if (score == -1.0) {
+                        reason = "source disappeared";
+                    } else if (score == 0.0) {
+                        reason = "source inactive";
+                    } else {
+                        reason = "low score: " + std::to_string(score);
+                    }
+                    
+                    // Remove from Suspicious List
+                    SuspiciousList.erase(toRemove);
+                    testSuspiciousSuccess = 1;
+                    
+                    // Log details
+                    std::ostringstream oss;
+                    oss << toRemove << " (" << reason << ")";
+                    removedDetails.push_back(oss.str());
+                }
+                
+                if (!removedDetails.empty()) {
+                    actionDescription = "Remove from Suspicious List (" + std::to_string(removedDetails.size()) + " sources removed)";
+                    
+                    std::cout << "\n===== Removed from Suspicious List =====" << std::endl;
+                    for (const auto& detail : removedDetails) {
+                        std::cout << "  - " << detail << std::endl;
+                    }
+                } else {
+                    actionDescription = "Remove from Suspicious List (No suitable candidates for removal)";
+                    testSuspiciousSuccess = 0;
+                }
+            } else {
+                actionDescription = "Remove from Suspicious List (No suitable candidates for removal)";
+                testSuspiciousSuccess = 0;
+            }
+            
+            break;
+        }
+        
+        case 3: {
+            // Promote to blacklist with improved detection criteria
+            std::vector<Ipv4Address> toPromote;
+            std::vector<std::string> promotionDetails;
+            
+            // Enhanced prioritization to handle larger environments
+            for (const auto& [addr, suspiciousScore] : SuspiciousList) {
+                auto it = sourceBehaviorMap.find(addr);
+                
+                // Skip if not in behavior map
+                if (it == sourceBehaviorMap.end()) continue;
+                
+                const auto& stats = it->second;
+                
+                // Skip if not active
+                if (!stats.isActive) continue;
+                
+                double dropRate = static_cast<double>(stats.totalDroppedPackets) / 
+                                 std::max(1.0, static_cast<double>(stats.totalTxPackets));
+                
+                double timeDuration = stats.lastSeenTime - stats.firstSeenTime;
+                
+                // Adjust thresholds based on activity level
+                double dynamicTimeThreshold = TIME_THRESHOLD;
+                double dynamicDropRateThreshold = 0.6 - (activeSourceCount / 1000.0); // Lower in larger environments
+                double dynamicActiveRatioThreshold = 0.95; // Slightly lowered from 0.99
+                
+                // Promotion criteria
+                bool condition1 = timeDuration > dynamicTimeThreshold && 
+                                stats.activeRatio > dynamicActiveRatioThreshold;
+                
+                bool condition2 = timeDuration > dynamicTimeThreshold && 
+                                dropRate > dynamicDropRateThreshold;
+                
+                // New condition for sustained high suspicious score
+                bool condition3 = suspiciousScore > 0.85 && 
+                                timeDuration > dynamicTimeThreshold * 1.5;
+                
+                // Packet volume-based condition for high-traffic attackers
+                bool condition4 = stats.totalTxPackets > 5000 && 
+                                dropRate > dynamicDropRateThreshold * 0.8 &&
+                                timeDuration > dynamicTimeThreshold * 0.5;
+                
+                if (condition1 || condition2 || condition3 || condition4) {
+                    toPromote.push_back(addr);
+                    
+                    // Create detailed reason for promotion
+                    std::ostringstream reason;
+                    reason << addr << " (";
+                    if (condition1) reason << "high activity ratio: " << stats.activeRatio;
+                    else if (condition2) reason << "high drop rate: " << dropRate;
+                    else if (condition3) reason << "sustained high score: " << suspiciousScore;
+                    else if (condition4) reason << "high volume attack: " << stats.totalTxPackets << " packets";
+                    reason << ")";
+                    
+                    promotionDetails.push_back(reason.str());
+                    promoteBlackSuccess = 1;
+                } else {
+                    promoteBlackSuccess = 0;
+                }
+            }
+            
+            for (const auto& addr : toPromote) {
+                BlackList.insert(addr);
+                SuspiciousList.erase(addr);
+            }
+            
+            // Blacklist enforcement with rate limiting to prevent processing overload
+            ApplicationContainer newContainer;
+            int enforcementCount = 0; 
+            const int MAX_ENFORCEMENTS_PER_CYCLE = 10; // Limit enforcements per cycle
+            
+            for (int k = 0; k < NUMBER_OF_BOTS && enforcementCount < MAX_ENFORCEMENTS_PER_CYCLE; ++k) {
+                Ptr<Node> node = botNodes.Get(k);
+                
+                // Get Bot IP
+                Ipv4Address botIp = botInterfaces.GetAddress(k);
+                
+                // Check if the bot is in the blacklist
+                if (BlackList.find(botIp) != BlackList.end()) {
+                    std::cout << "Blacklisted bot detected: " << botIp << std::endl;
+                    
+                    // Get OnOffApplication
+                    Ptr<Application> app = node->GetApplication(0);
+                    Ptr<OnOffApplication> onOffApp = DynamicCast<OnOffApplication>(app);
+                    
+                    if (onOffApp) {
+                        std::cout << "Stopping attack from bot: " << botIp << std::endl;
+                        
+                        // Stop OnOffApplication
+                        newContainer.Add(onOffApp);
+                        newContainer.Stop(Seconds(Simulator::Now().GetSeconds() + 0.1));
+                        
+                        std::cout << "Attack stopped for bot with IP " << botIp << std::endl;
+                        enforcementCount++;
+                    } else {
+                        std::cout << "Failed to retrieve OnOffApplication for bot: " << botIp << std::endl;
+                    }
+                }
+            }
+            
+            actionDescription = "Promote to Blacklist (" + std::to_string(toPromote.size()) + " sources promoted)";
+            
+            // Log detailed promotion information
+            if (!promotionDetails.empty()) {
+                std::cout << "\n===== Promoted to Blacklist =====" << std::endl;
+                for (const auto& detail : promotionDetails) {
+                    std::cout << "  - " << detail << std::endl;
+                }
+            }
+            
+            break;
+        }
+        
+        default: {
+            actionDescription = "Invalid Action";
+            break;
+        }
+    }
+    
+    // Step 3: print status with improved metrics
+    std::cout << "\n===== Action Taken: " << actionDescription << " =====" << std::endl;
+    
+    // Print current suspicious list with score-based coloring
+    std::cout << "\n===== Current Suspicious List (" << SuspiciousList.size() << " entries) =====" << std::endl;
+    if (SuspiciousList.empty()) {
+        std::cout << "  (empty)" << std::endl;
+    } else {
+        // Sort by score for better readability
+        std::vector<std::pair<Ipv4Address, double>> sortedSuspicious(SuspiciousList.begin(), SuspiciousList.end());
+        std::sort(sortedSuspicious.begin(), sortedSuspicious.end(),
+                [](const auto& a, const auto& b) { return a.second > b.second; });
+        
+        for (const auto& [addr, score] : sortedSuspicious) {
+            std::string riskLevel;
+            if (score > 0.8) riskLevel = "HIGH";
+            else if (score > 0.5) riskLevel = "MEDIUM";
+            else riskLevel = "LOW";
+            
+            std::cout << "Address: " << addr 
+                    << ", Suspicious Score: " << score 
+                    << " [" << riskLevel << "]" << std::endl;
+        }
+    }
+    
+    // Print current blacklist
+    std::cout << "\n===== Current Blacklist (" << BlackList.size() << " entries) =====" << std::endl;
+    if (BlackList.empty()) {
+        std::cout << "  (empty)" << std::endl;
+    } else {
+        for (const auto& addr : BlackList) {
+            std::cout << "Address: " << addr << std::endl;
+        }
+    }
+    
+    // Print key metrics
+    std::cout << "\n===== Current Environment Metrics =====" << std::endl;
+    std::cout << "Active Sources: " << activeSourceCount << std::endl;
+    std::cout << "Dynamic Suspicious Threshold: " << SUSPICIOUS_THRESHOLD << std::endl;
+    std::cout << "Dynamic Time Threshold: " << TIME_THRESHOLD << std::endl;
+    std::cout << "====================================\n" << std::endl;
+}
+
 
 
 /*
@@ -310,8 +774,8 @@ Monitor the flows and exchange info with the Gym env
 void Monitor () {
     monitor->CheckForLostPackets();
     double currentSimTime = Simulator::Now().GetSeconds();
-    if (currentSimTime >= 0.05) {   // 从第一个time window开始计数
-        totalMonitorCount++;  // 总体监控次数增加
+    if (currentSimTime >= 0.1) {   // Start monitoring
+        totalMonitorCount++;  // total monitor count
     }
     // Victim Server 1
     Ptr<Node> node_server1 = csmaNodesVictim.Get(1);
@@ -361,11 +825,19 @@ void Monitor () {
                 // flowIdFeaturesMap[flowId].lastDelay[0] = fs->second.lastDelay.GetSeconds();
                 
                 // Existing flow - calculate increments
-                currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
-                currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
-                currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
-                currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
-                currentAgg.totalDroppedInc += flowIdFeaturesMap[flowId].droppedPackets[0];
+                // currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
+                // currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
+                // currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
+                // currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
+                // Don't include dropped packets statistics if source address is in blacklist or suspicious list
+                if (BlackList.find(ft.sourceAddress) == BlackList.end() && 
+                    SuspiciousList.find(ft.sourceAddress) == SuspiciousList.end()) {
+                    currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
+                    currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
+                    currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
+                    currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
+                    currentAgg.totalDroppedInc += flowIdFeaturesMap[flowId].droppedPackets[0];  // Set dropped packet count to 0 for these addresses 
+                }
                 
                 totalDelay += flowIdFeaturesMap[flowId].delaySum[0];
                 totalJitter += flowIdFeaturesMap[flowId].jitterSum[0];
@@ -401,11 +873,19 @@ void Monitor () {
                 // flowIdFeaturesMap[flowId].lastDelay.push_back(fs->second.lastDelay.GetSeconds());
                 
                 // Add initial values to aggregates
-                currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
-                currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
-                currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
-                currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
-                currentAgg.totalDroppedInc += flowIdFeaturesMap[flowId].droppedPackets[0];
+                // currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
+                // currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
+                // currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
+                // currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
+                // Don't include dropped packets statistics if source address is in blacklist or suspicious list
+                if (BlackList.find(ft.sourceAddress) == BlackList.end() && 
+                    SuspiciousList.find(ft.sourceAddress) == SuspiciousList.end()) {
+                    currentAgg.totalTxBytesInc += flowIdFeaturesMap[flowId].txBytes[0];
+                    currentAgg.totalRxBytesInc += flowIdFeaturesMap[flowId].rxBytes[0];
+                    currentAgg.totalTxPacketsInc += flowIdFeaturesMap[flowId].txPackets[0];
+                    currentAgg.totalRxPacketsInc += flowIdFeaturesMap[flowId].rxPackets[0];
+                    currentAgg.totalDroppedInc += flowIdFeaturesMap[flowId].droppedPackets[0];  // Set dropped packet count to 0 for these addresses 
+                }
                 
                 totalDelay += flowIdFeaturesMap[flowId].delaySum[0];
                 totalJitter += flowIdFeaturesMap[flowId].jitterSum[0];
@@ -418,11 +898,6 @@ void Monitor () {
                 flowIdFeaturesMap[flowId].lastDelaySum.push_back(fs->second.delaySum.GetSeconds());
                 flowIdFeaturesMap[flowId].lastJitterSum.push_back(fs->second.jitterSum.GetSeconds());
             }
-            // Don't include dropped packets statistics if source address is in blacklist or suspicious list
-            if (BlackList.find(ft.sourceAddress) != BlackList.end() || 
-                SuspiciousList.find(ft.sourceAddress) != SuspiciousList.end()) {
-                currentAgg.totalDroppedInc = 0;  // Set dropped packet count to 0 for these addresses 
-            }
             auto& stats = sourceBehaviorMap[ft.sourceAddress];
             stats.isActive = false;
             // For new source address
@@ -431,6 +906,8 @@ void Monitor () {
                 stats.activeCount = 0;
                 stats.totalTxBytes = 0;
                 stats.totalTxPackets = 0;
+                stats.totalRxBytes = 0;
+                stats.totalRxPackets = 0;
                 stats.firstMonitorCount = totalMonitorCount;
             }
             
@@ -445,6 +922,8 @@ void Monitor () {
                 stats.lastSeenTime = flowIdFeaturesMap[flowId].timeLastTxPacket[0];
                 stats.totalTxBytes += flowIdFeaturesMap[flowId].txBytes[0];
                 stats.totalTxPackets += flowIdFeaturesMap[flowId].txPackets[0];
+                stats.totalRxBytes += flowIdFeaturesMap[flowId].rxBytes[0];
+                stats.totalRxPackets += flowIdFeaturesMap[flowId].rxPackets[0];
                 stats.totalDroppedPackets += flowIdFeaturesMap[flowId].droppedPackets[0]; 
                 
                 // Calculate average sending rate
@@ -479,10 +958,12 @@ void Monitor () {
                 << "\nActive Count: " << stats.activeCount
                 << "\nActive Ratio: " << stats.activeRatio
                 << "\nActive Status: " << stats.isActive
-                << "\n(active " << stats.activeCount << " times in " 
+                << "\n(active " << stats.activeCount << " times in "
                 << (totalMonitorCount - stats.firstMonitorCount + 1) << " monitors)"
                 << "\nTotal Tx Bytes: " << stats.totalTxBytes
                 << "\nTotal Tx Packets: " << stats.totalTxPackets
+                << "\nTotal Rx Bytes: " << stats.totalRxBytes
+                << "\nTotal Rx Packets: " << stats.totalRxPackets
                 << "\nTotal Dropped Packets: " << stats.totalDroppedPackets
                 << "\nAvg Send Rate: " << stats.avgSendRate << " bytes/s"
                 << "\nDuration: " << (stats.lastSeenTime - stats.firstSeenTime) << "s"
@@ -490,14 +971,15 @@ void Monitor () {
     }
     std::cout << "========================================================\n" << std::endl;
     bool isSuspiciousListEmpty = SuspiciousList.empty();
-    nge->SetStats(currentAgg, isSuspiciousListEmpty);
+    nge->SetStats(currentAgg, isSuspiciousListEmpty, testSuspiciousSuccess, promoteBlackSuccess);
 
     // Get action from Gym environment
     uint32_t action = nge->NotifyGetAction();
     // action = 0;
 
-    ApplyAction(action, sourceBehaviorMap);
-    // std::cout << "\n===== Aggregate Network Statistics at Time " << currentAgg.simTime << "s =====" << std::endl;
+    // ApplyAction(action, sourceBehaviorMap);
+    ApplyLLMAction(action, sourceBehaviorMap); 
+    // std::cout << "\n===== 1:Aggregate Network Statistics at Time " << currentAgg.simTime << "s =====" << std::endl;
     // std::cout << "Active Flows: " << currentAgg.flowCount << std::endl;
     // std::cout << "Total Tx Bytes (increment): " << currentAgg.totalTxBytesInc << " bytes" << std::endl;
     // std::cout << "Total Rx Bytes (increment): " << currentAgg.totalRxBytesInc << " bytes" << std::endl;
@@ -507,8 +989,8 @@ void Monitor () {
     // std::cout << "Average Delay (increment): " << currentAgg.avgDelayInc << " seconds" << std::endl;
     // std::cout << "Average Jitter (increment): " << currentAgg.avgJitterInc << " seconds" << std::endl;
     // std::cout << "========================================================\n" << std::endl;
-
-    Simulator::Schedule(Seconds(0.05), &Monitor);
+    // monitor frequency
+    Simulator::Schedule(Seconds(0.1), &Monitor);
 }
 
 void extract_features(Ptr<const Packet> packet, uint32_t nodeID, const std::string &eventType) {
@@ -948,215 +1430,160 @@ int main (int argc, char *argv[])
     address.SetBase("10.1.3.0", "255.255.255.0");
     Ipv4InterfaceContainer p2pInterfacesInternet = address.Assign(p2pDevicesInternet);
 
+    // address.SetBase("10.0.0.0", "255.255.255.252");
+    // for (int j = 0; j < NUMBER_OF_BOTS; ++j) {
+    //     address.Assign(botDeviceContainer[j]);
+    //     address.NewNetwork();
+    // }
+    
     address.SetBase("10.0.0.0", "255.255.255.252");
     for (int j = 0; j < NUMBER_OF_BOTS; ++j) {
-        address.Assign(botDeviceContainer[j]);
-        address.NewNetwork();
+        Ipv4InterfaceContainer temp = address.Assign(botDeviceContainer[j]);  
+        botInterfaces.Add(temp.Get(1));  
+        address.NewNetwork();  
     }
-    
+ 
     address.SetBase("10.0.1.0", "255.255.255.0");
     for (int j = 0; j < NUMBER_OF_CLIENTS; ++j) {
         address.Assign(clientDevicesContainer[j]);
         address.NewNetwork();
     }
-    
+
+    // Create random variable generator
+    Ptr<UniformRandomVariable> randomTime = CreateObject<UniformRandomVariable>();
+
     // dummy attack server 1 (node 2)
     OnOffHelper onoff("ns3::UdpSocketFactory", Address(InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 9001)));
     onoff.SetConstantRate(DataRate(DDOS_RATE));
     onoff.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=30]"));
     onoff.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0]"));
     ApplicationContainer onOffApp[NUMBER_OF_BOTS];
-    
+
     // Install application in all bots
     for (int k = 0; k < NUMBER_OF_BOTS; ++k) {
         onOffApp[k] = onoff.Install(botNodes.Get(k));
-
-        if (k < 2) {
-            onOffApp[k].Start(Seconds(0.0));
-            onOffApp[k].Stop(Seconds(MAX_SIMULATION_TIME));
+        
+        // Generate random start times for different groups
+        double startTime;
+        if (k < 12) {
+            startTime = randomTime->GetValue(0.0, 2.0); 
+        } else if (k >= 12 && k < 22) {
+            startTime = randomTime->GetValue(2.0, 4.0);  
+        } else if (k >= 22 && k < 34) {
+            startTime = randomTime->GetValue(4.0, 5.0);  
+        } else if (k >= 34 && k < 48) {
+            startTime = randomTime->GetValue(5.0, 6.0);  
+        } else if (k >= 48 && k <= 55) {
+            startTime = randomTime->GetValue(6.0, 8.0); 
         } else {
-            onOffApp[k].Start(Seconds(5.0));
-            onOffApp[k].Stop(Seconds(MAX_SIMULATION_TIME));
+            startTime = randomTime->GetValue(8.0, 9.5);  
+        }
+        
+        onOffApp[k].Start(Seconds(startTime));
+        onOffApp[k].Stop(Seconds(MAX_SIMULATION_TIME));
+    }
+
+    const uint32_t numTransmissions = 10; // Number of transmissions per client: train
+    const double minStartTime = 0.0;  // Minimum start time
+    const double maxStartTime = MAX_SIMULATION_TIME - 0.5; // Maximum start time
+    const double duration = 1.0;      // Duration for each transmission
+    const uint32_t sendBytes = 2000; // Bytes to send per transmission
+    std::vector<ApplicationContainer> bulkSendApps; // Store all application containers
+
+    // Random number generator setup
+    std::random_device rd;
+    std::mt19937 gen(rd()); // random number generator
+    std::uniform_real_distribution<> timeDist(minStartTime, maxStartTime);
+
+    for (uint32_t clientId = 0; clientId < NUMBER_OF_CLIENTS; clientId++) {
+        std::vector<double> startTimes; // Store random start times for this client
+
+        // Generate random start times for the client
+        for (uint32_t i = 0; i < numTransmissions; i++) {
+            double randomTime = timeDist(gen);
+            startTimes.push_back(randomTime);
+        }
+
+        // Sort start times to ensure sequential scheduling
+        std::sort(startTimes.begin(), startTimes.end());
+
+        // Configure transmissions for this client
+        for (uint32_t i = 0; i < numTransmissions; i++) {
+            BulkSendHelper bulkSendHelper("ns3::TcpSocketFactory",
+                InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
+            bulkSendHelper.SetAttribute("MaxBytes", UintegerValue(sendBytes));
+
+            ApplicationContainer app = bulkSendHelper.Install(clientNodes.Get(clientId));
+            app.Start(Seconds(startTimes[i]));
+            app.Stop(Seconds(startTimes[i] + duration));
+            bulkSendApps.push_back(app);
         }
     }
 
-    std::vector<ApplicationContainer> bulkSendApps1;  // Store applications for client 1
-    std::vector<ApplicationContainer> bulkSendApps2;  // Store applications for client 2
-    std::vector<ApplicationContainer> bulkSendApps3;  // Store applications for client 3
-    std::vector<ApplicationContainer> bulkSendApps4;  // Store applications for client 4
-
-    // Configure transmission timing for client 1
-    std::vector<double> startTimes1 = {0.2, 2.0, 4.0};  // Start times for client 1
-    std::vector<double> durations1 = {1.0, 1.0, 1.0};   // Durations for client 1
-    std::vector<uint32_t> sendBytes1 = {50000, 50000, 50000};  // Bytes to send for client 1
-
-    // Configure different transmission timing for client 2
-    std::vector<double> startTimes2 = {0.5, 2.5, 6.0};  // Start times for client 2
-    std::vector<double> durations2 = {1.0, 1.0, 1.0};    // Durations for client 2
-    std::vector<uint32_t> sendBytes2 = {50000, 50000, 50000};   // Bytes to send for client 2
-
-    // Configure different transmission timing for client 3
-    std::vector<double> startTimes3 = {1.5, 6.5};  // Start times for client 3
-    std::vector<double> durations3 = {1.0, 1.0};    // Durations for client 3
-    std::vector<uint32_t> sendBytes3 = {50000, 50000};   // Bytes to send for client 3
-
-    // Configure different transmission timing for client 4
-    std::vector<double> startTimes4 = {3.5, 8.5};  // Start times for client 4
-    std::vector<double> durations4 = {1.0, 1.0};    // Durations for client 4
-    std::vector<uint32_t> sendBytes4 = {50000, 50000};   // Bytes to send for client 4
-
-    // Set Client 1
-    for(size_t i = 0; i < startTimes1.size(); i++) {
-        BulkSendHelper bulkSendServer1("ns3::TcpSocketFactory", 
-            InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
-        bulkSendServer1.SetAttribute("MaxBytes", UintegerValue(sendBytes1[i]));
-        
-        ApplicationContainer app1 = bulkSendServer1.Install(clientNodes.Get(0));
-        app1.Start(Seconds(startTimes1[i]));
-        app1.Stop(Seconds(startTimes1[i] + durations1[i]));
-        bulkSendApps1.push_back(app1);
-    }
-
-    // Set Client 2
-    for(size_t i = 0; i < startTimes2.size(); i++) {
-        BulkSendHelper bulkSendServer2("ns3::TcpSocketFactory", 
-            InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
-        bulkSendServer2.SetAttribute("MaxBytes", UintegerValue(sendBytes2[i]));
-        
-        ApplicationContainer app2 = bulkSendServer2.Install(clientNodes.Get(1));
-        app2.Start(Seconds(startTimes2[i]));
-        app2.Stop(Seconds(startTimes2[i] + durations2[i]));
-        bulkSendApps2.push_back(app2);
-    }
-    
-    // Set Client 3
-    for(size_t i = 0; i < startTimes3.size(); i++) {
-        BulkSendHelper bulkSendServer3("ns3::TcpSocketFactory", 
-            InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
-        bulkSendServer3.SetAttribute("MaxBytes", UintegerValue(sendBytes3[i]));
-        
-        ApplicationContainer app3 = bulkSendServer3.Install(clientNodes.Get(2));
-        app3.Start(Seconds(startTimes3[i]));
-        app3.Stop(Seconds(startTimes3[i] + durations3[i]));
-        bulkSendApps3.push_back(app3);
-    }
-    
-    // Set Client 4
-    for(size_t i = 0; i < startTimes4.size(); i++) {
-        BulkSendHelper bulkSendServer4("ns3::TcpSocketFactory", 
-            InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
-        bulkSendServer4.SetAttribute("MaxBytes", UintegerValue(sendBytes4[i]));
-        
-        ApplicationContainer app4 = bulkSendServer4.Install(clientNodes.Get(3));
-        app4.Start(Seconds(startTimes4[i]));
-        app4.Stop(Seconds(startTimes4[i] + durations4[i]));
-        bulkSendApps4.push_back(app4);
-    }
-    // Legitimate client connection to Server 1 in the Victim LAN (node 2)
-    // Sender Application (Packets generated by this application are throttled)
-    // BulkSendHelper bulkSendServer1("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(1), 8001));
-    // bulkSendServer1.SetAttribute("MaxBytes", UintegerValue(MAX_BULK_BYTES));
-    // ApplicationContainer bulkSendServer1App1 = bulkSendServer1.Install(clientNodes.Get(0)); // Legitimate client 1
-    // ApplicationContainer bulkSendServer1App2 = bulkSendServer1.Install(clientNodes.Get(1)); // Legitimate client 2
-    // // ApplicationContainer bulkSendServer1App3 = bulkSendServer1.Install(csmaNodesVictim.Get(3)); // Victim workstation 1
-    // // ApplicationContainer bulkSendServer1App4 = bulkSendServer1.Install(csmaNodesVictim.Get(4)); // Victim workstation 2
-    // bulkSendServer1App1.Start(Seconds(0.2));
-    // bulkSendServer1App1.Stop(Seconds(MAX_SIMULATION_TIME - 3));
-    // bulkSendServer1App2.Start(Seconds(0.1));
-    // bulkSendServer1App2.Stop(Seconds(MAX_SIMULATION_TIME - 2));
-    // bulkSendServer1App3.Start(Seconds(1.0));
-    // bulkSendServer1App3.Stop(Seconds(5.0));
-    // bulkSendServer1App4.Start(Seconds(1.1));
-    // bulkSendServer1App4.Stop(Seconds(6.0));
-
-    // // Legitimate client connections to Server 2 in the Victim LAN (node 3)
-    // // Sender Application (Packets generated by this application are throttled)
-    // BulkSendHelper bulkSendServer2("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(2), 8002));
-    // bulkSendServer2.SetAttribute("MaxBytes", UintegerValue(MAX_BULK_BYTES));
-    // ApplicationContainer bulkSendServer2App1 = bulkSendServer2.Install(clientNodes.Get(2)); // Legitimate client 3
-    // ApplicationContainer bulkSendServer2App2 = bulkSendServer2.Install(clientNodes.Get(3)); // Legitimate client 4
-    // ApplicationContainer bulkSendServer2App3 = bulkSendServer2.Install(csmaNodesVictim.Get(5)); // Victim workstation 3
-    // ApplicationContainer bulkSendServer2App4 = bulkSendServer2.Install(csmaNodesVictim.Get(6)); // Victim workstation 4
-    // bulkSendServer2App1.Start(Seconds(0.1));
-    // bulkSendServer2App1.Stop(Seconds(MAX_SIMULATION_TIME - 1));
-    // bulkSendServer2App2.Start(Seconds(1.0));
-    // bulkSendServer2App2.Stop(Seconds(MAX_SIMULATION_TIME - 1));
-    // bulkSendServer2App3.Start(Seconds(2.0));
-    // bulkSendServer2App3.Stop(Seconds(5.0));
-    // bulkSendServer2App4.Start(Seconds(3.0));
-    // bulkSendServer2App4.Stop(Seconds(6.0));
-
-
     // client send TCP traffic to all victim nodes randomly
-    // for (uint32_t clientIndex = 0; clientIndex < clientNodes.GetN(); ++clientIndex) {
-    //     // for (uint32_t victimIndex = 1; victimIndex < csmaNodesVictim.GetN(); ++victimIndex) {
-    //         // Set Address and Port
-    //         BulkSendHelper tcpClient("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(1), TCP_SINK_PORT + 1));
-    //         tcpClient.SetAttribute("MaxBytes", UintegerValue(MAX_BULK_BYTES));
+    for (uint32_t clientIndex = 0; clientIndex < clientNodes.GetN(); ++clientIndex) {
+        for (uint32_t victimIndex = 1; victimIndex < csmaNodesVictim.GetN(); ++victimIndex) {
+            // Set Address and Port
+            BulkSendHelper tcpClient("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(1), TCP_SINK_PORT + 1));
+            tcpClient.SetAttribute("MaxBytes", UintegerValue(sendBytes));
 
-    //         // start time
-    //         Ptr<UniformRandomVariable> randomStartTime = CreateObject<UniformRandomVariable>();
-    //         randomStartTime->SetAttribute("Min", DoubleValue(0.0));
-    //         randomStartTime->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - 2.0));
-    //         double startTime = randomStartTime->GetValue();
+            // start time
+            Ptr<UniformRandomVariable> randomStartTime = CreateObject<UniformRandomVariable>();
+            randomStartTime->SetAttribute("Min", DoubleValue(0.0));
+            randomStartTime->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - 2.0));
+            double startTime = randomStartTime->GetValue();
 
-    //         // interval time
-    //         Ptr<UniformRandomVariable> randomInterval = CreateObject<UniformRandomVariable>();
-    //         randomInterval->SetAttribute("Min", DoubleValue(1.0));
-    //         randomInterval->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - startTime));
-    //         double interval = randomInterval->GetValue();
+            double stopTime = startTime + 1;
+            if (stopTime > MAX_SIMULATION_TIME) {
+                stopTime = MAX_SIMULATION_TIME;
+            }
 
-    //         double stopTime = startTime + interval;
-    //         if (stopTime > MAX_SIMULATION_TIME) {
-    //             stopTime = MAX_SIMULATION_TIME;
-    //         }
-
-    //         install TCP sender to all client nodes
-    //         ApplicationContainer tcpClientApp = tcpClient.Install(clientNodes.Get(clientIndex));
-    //         tcpClientApp.Start(Seconds(0.0));
-    //         tcpClientApp.Stop(Seconds(5.0));
-    //     }
-    // }
+            // install TCP sender to all client nodes
+            ApplicationContainer tcpClientApp = tcpClient.Install(clientNodes.Get(clientIndex));
+            tcpClientApp.Start(Seconds(startTime));
+            tcpClientApp.Stop(Seconds(stopTime));
+        }
+    }
     
 
-    // // Add random TCP traffic generation between victim nodes within Victim LAN
-    // for (uint32_t victimSenderInnerIndex = 1; victimSenderInnerIndex < csmaNodesVictim.GetN(); ++victimSenderInnerIndex) {
-    //     Ptr<UniformRandomVariable> randomVictimInnerIndex = CreateObject<UniformRandomVariable>();
-    //     randomVictimInnerIndex->SetAttribute("Min", DoubleValue(1.0));
-    //     randomVictimInnerIndex->SetAttribute("Max", DoubleValue(csmaNodesVictim.GetN() - 1));
+    // Add random TCP traffic generation between victim nodes within Victim LAN
+    for (uint32_t victimSenderInnerIndex = 1; victimSenderInnerIndex < csmaNodesVictim.GetN(); ++victimSenderInnerIndex) {
+        Ptr<UniformRandomVariable> randomVictimInnerIndex = CreateObject<UniformRandomVariable>();
+        randomVictimInnerIndex->SetAttribute("Min", DoubleValue(1.0));
+        randomVictimInnerIndex->SetAttribute("Max", DoubleValue(csmaNodesVictim.GetN() - 1));
 
-    //     // Randomly select a different victim node to communicate with
-    //     uint32_t victimReceiverInnerIndex;
-    //     do {
-    //         victimReceiverInnerIndex = randomVictimInnerIndex->GetInteger();
-    //     } while (victimReceiverInnerIndex == victimSenderInnerIndex); // Ensure a node doesn't send to itself
+        // Randomly select a different victim node to communicate with
+        uint32_t victimReceiverInnerIndex;
+        do {
+            victimReceiverInnerIndex = randomVictimInnerIndex->GetInteger();
+        } while (victimReceiverInnerIndex == victimSenderInnerIndex); // Ensure a node doesn't send to itself
 
-    //     // Set up TCP communication between victim nodes
-    //     BulkSendHelper tcpClientInner("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(victimReceiverInnerIndex), TCP_SINK_PORT + victimReceiverInnerIndex));
-    //     tcpClientInner.SetAttribute("MaxBytes", UintegerValue(MAX_BULK_BYTES));
+        // Set up TCP communication between victim nodes
+        BulkSendHelper tcpClientInner("ns3::TcpSocketFactory", InetSocketAddress(csmaInterfacesVictim.GetAddress(victimReceiverInnerIndex), TCP_SINK_PORT + victimReceiverInnerIndex));
+        tcpClientInner.SetAttribute("MaxBytes", UintegerValue(sendBytes));
 
-    //     // Start time for the client application
-    //     Ptr<UniformRandomVariable> randomStartTimeInner = CreateObject<UniformRandomVariable>();
-    //     randomStartTimeInner->SetAttribute("Min", DoubleValue(0.0));
-    //     randomStartTimeInner->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - 2.0));
-    //     double startTimeInner = randomStartTimeInner->GetValue();
+        // Start time for the client application
+        Ptr<UniformRandomVariable> randomStartTimeInner = CreateObject<UniformRandomVariable>();
+        randomStartTimeInner->SetAttribute("Min", DoubleValue(0.0));
+        randomStartTimeInner->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - 2.0));
+        double startTimeInner = randomStartTimeInner->GetValue();
 
-    //     // Interval time
-    //     Ptr<UniformRandomVariable> randomIntervalInner = CreateObject<UniformRandomVariable>();
-    //     randomIntervalInner->SetAttribute("Min", DoubleValue(1.0));
-    //     randomIntervalInner->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - startTimeInner));
-    //     double intervalInner = randomIntervalInner->GetValue();
+        // Interval time
+        Ptr<UniformRandomVariable> randomIntervalInner = CreateObject<UniformRandomVariable>();
+        randomIntervalInner->SetAttribute("Min", DoubleValue(1.0));
+        randomIntervalInner->SetAttribute("Max", DoubleValue(MAX_SIMULATION_TIME - startTimeInner));
+        double intervalInner = randomIntervalInner->GetValue();
         
-    //     double stopTimeInner = startTimeInner + intervalInner;
-    //     if (stopTimeInner > MAX_SIMULATION_TIME) {
-    //         stopTimeInner = MAX_SIMULATION_TIME;
-    //     }
+        double stopTimeInner = startTimeInner + intervalInner;
+        if (stopTimeInner > MAX_SIMULATION_TIME) {
+            stopTimeInner = MAX_SIMULATION_TIME;
+        }
 
-    //     // Install TCP sender to the selected victim node
-    //     ApplicationContainer tcpClientAppInner = tcpClientInner.Install(csmaNodesVictim.Get(victimSenderInnerIndex));
-    //     tcpClientAppInner.Start(Seconds(startTimeInner));
-    //     tcpClientAppInner.Stop(Seconds(stopTimeInner));
-    // }
+        // Install TCP sender to the selected victim node
+        ApplicationContainer tcpClientAppInner = tcpClientInner.Install(csmaNodesVictim.Get(victimSenderInnerIndex));
+        tcpClientAppInner.Start(Seconds(startTimeInner));
+        tcpClientAppInner.Stop(Seconds(stopTimeInner));
+    }
     
     for (uint32_t victimIndex = 1; victimIndex < csmaNodesVictim.GetN(); ++victimIndex) {
         // install TCP sink: 
@@ -1272,7 +1699,7 @@ int main (int argc, char *argv[])
     Monitor();
 
     // Ensures the simulator stops eventually
-    Simulator::Stop(Seconds(MAX_SIMULATION_TIME + 5));
+    Simulator::Stop(Seconds(MAX_SIMULATION_TIME));
     Simulator::Run();
     
     monitor->SerializeToXmlFile("flowmonitor.xml", true, true);

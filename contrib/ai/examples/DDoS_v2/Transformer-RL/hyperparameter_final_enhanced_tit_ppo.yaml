@@ -4,7 +4,7 @@
 # MountainCar-v0:  # -97.92 7.025
 Ns3-v0:
   # n_timesteps: 100000
-  n_timesteps: 1000
+  n_timesteps: 300
   patch_dim: 1
   num_blocks: 2
   attention_dropout_inner: 0.0
