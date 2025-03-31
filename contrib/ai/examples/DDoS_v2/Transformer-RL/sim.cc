@@ -9,12 +9,12 @@
  *     Victim Network                  Internet            Legitimate nodes
  *
  *         (SW) ---- (FW) ------------ (Router) ---------- (C1)...(Cm)
- *         (n0)      (n1)               (n12)              (n23)..(n26)
+ *         (n0)      (n1)               (n12)              (n21)..(n50)
  *      _____|_______                   / |  \
  *     /    / \      \                 /  |   \
  *    /    /   \      \               /   |    \
  *  (S1),(S2),(W1)...(W8)           (B1),(B2)...(Bn)
- *  (n2),(n3),(n4)...(n11)         (n13),(n14)..(n22)
+ *  (n2),(n3),(n4)...(n11)         (n13),(n14)..(n20)
  *
  *                              Attacker Network (Botnet)
  *
@@ -24,14 +24,17 @@
  *  FW is the victim router/firewall
  *  Router is the Internet entry point
  *  C1-Cm are legitimate users, communicating with servers S1 and S2 (data servers), where m=4
- *  B1-Bn are bots DDoS-ing the network, where n=10
+ *  B1-Bn are bots DDoS-ing the network, where n=8
  *
- * NetAnim XML is saved as -> DDoSim_v2.xml
+ * NetAnim XML is saved as -> DDoSim.xml
  *
+ * 2025 University of Liverpool
  * Modify: Valerio Selis <v.selis@liverpool.ac.uk>
  * Modify: Ronghui Mu <ronghui.mu@liverpool.ac.uk>
+ * Modify: Jinwei Hu <jinwei.hu@liverpool.ac.uk>
  *
  */
+
 #include <ns3/csma-helper.h>
 #include <ns3/ai-module.h>
 #include "ns3/mobility-module.h"
