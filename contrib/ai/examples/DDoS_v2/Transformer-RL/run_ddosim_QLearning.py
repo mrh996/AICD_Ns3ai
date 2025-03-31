@@ -16,8 +16,12 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
 # Author: Muyuan Shen <muyuan_shen@hust.edu.cn>
-# Modify: Valerio Selis <v.selis@liverpool.ac.uk>
-import os
+#
+# 2025 University of Liverpool
+# Modify: Ronghui Mu <ronghui.mu@liverpool.ac.uk>
+# Modify: Jinwei Hu <jinwei.hu@liverpool.ac.uk>
+# Modify: Valerio Selis <v.selis@liverpool.ac.uk>import os
+
 import ns3ai_gym_env
 import gymnasium as gym
 import numpy as np
