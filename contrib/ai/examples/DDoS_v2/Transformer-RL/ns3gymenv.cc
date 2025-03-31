@@ -252,7 +252,7 @@ float Ns3GymEnv::GetReward() {
     bool isNormalState = (m_aggFlowCount > 0) ? (m_aggPlr <= 0.1) : false;
     bool isAttackState = !isNormalState;
     
-    // 处理观察行为
+    // dealing with observational behaviour
     if (m_defendtype == 0) {
         m_observe_time += 1;
         if (m_observe_time > OBSERVE_THRESHOLD) {
