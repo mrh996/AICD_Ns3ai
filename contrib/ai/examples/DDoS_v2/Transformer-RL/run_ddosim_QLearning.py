@@ -210,7 +210,7 @@ torch.save({
 print("Final DQN Saved!", flush=True)
 
 # ===================== Testing Start =====================
-print("\n开始测试模型性能...", flush=True)
+print("\nStart testing model performance...", flush=True)
 
 
 test_episodes = 100  
