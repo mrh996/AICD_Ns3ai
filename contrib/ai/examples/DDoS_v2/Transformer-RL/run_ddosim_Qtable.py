@@ -84,7 +84,7 @@ class ClusteredQLearning:
         }
     
     def _get_state_cluster(self, state):
-        """将状态映射到相应的聚类"""
+        """map states to corresponding clusters"""
         if not self.fitted:
             return 0  # if not fitted, return the first cluster
         
@@ -191,7 +191,7 @@ class ClusteredQLearning:
             return np.argmax(self.q_table[cluster_id])
     
     def update(self, state, action, reward, next_state, done):
-        """更新Q表"""
+        """update Q table"""
         # save observed states
         self.observed_states.append(state)
         
@@ -482,7 +482,7 @@ class ClusteredQLearning:
         self.training_data['exploration_rate'].append(self.exploration_rate)
         self.training_data['q_table_size'].append(len(self.q_table))
 
-# 主训练循环
+# Main training loop
 def train_ddos_defense(env, agent, num_episodes=1000, max_steps=1000, 
                        save_interval=100, model_dir="models"):
     """train DDoS defense agent"""
@@ -611,7 +611,7 @@ def load_and_test_model():
     success = agent.load_model(model_path)
     
     if not success:
-        print("模型加载失败，请检查文件路径和文件是否存在")
+        print("Model loading failed, please check the file path and whether the file exists")
         return
     
     # set exploration rate to minimum
@@ -667,7 +667,7 @@ def main():
     )
 
     
-    # 测试代理
+    # Testing Agent
     print("\nStarting testing...", flush=True)
     test_rewards = test_ddos_defense(
         env=env,
@@ -685,7 +685,7 @@ def main():
     plt.savefig("/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/ddos_defense_models/0309/training_rewards.png")
     plt.show()
     
-    # 显示和分析Q表
+    # Display and analyze Q tables
     print("\n===== QTable Analysis =====", flush=True)
     agent.display_q_table(save_path="/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/ddos_defense_models/0309/q_table_heatmap.png")
     agent.analyze_q_table_by_plr(save_path="/LOCAL2/sgjhu13/ns-allinone-3.41/ns-3.41/contrib/ai/examples/DDoS_v2/ddos_defense_models/0309/plr_action_analysis.png")
