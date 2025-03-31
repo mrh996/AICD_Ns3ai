@@ -45,29 +45,7 @@ $ ./ns3 configure --enable-python-bindings -- -DPython3_LIBRARY_DIRS=/LOCAL2/mur
 
 $ ./ns3 build ns3ai_ddos_gym
 
-or
-
-$ ./ns3 build ns3ai_ddos_v2_gym
-
-Run the simulation:
-
-$ cd contrib/ai/examples/DDoS/use-gym/
-
-or
-
-$ cd contrib/ai/examples/DDoS_v2/use-gym/
-
-## Train a dummy RL agent to form DDoS attack
-
-python run_ddos_rl_attack.py
-or
-run_ddosim.py
-
 ## Train a Transformer-based RL agent to defend DDoS attack
 $ cd contrib/ai/examples/DDoS_v2/Transformer-RL/
 
 python run_ddosim_TiT.py
-
-
-
-
