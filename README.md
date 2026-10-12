@@ -1,3 +1,6 @@
+### Certified Robust and Scalable Autonomous Operation in Cyber Space (CRoCS) project
+## Two-tier cyber defence platform supporting transformer-based attack-defence RL agents in DDoS scenarios
+
 ## Install the required Python 3 modules:
 
 $ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
