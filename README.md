@@ -1,4 +1,4 @@
-### Certified Robust and Scalable Autonomous Operation in Cyber Space (CRoCS) project
+### Certified Robust Autonomous Operation in Cyber Space (CROY) project
 ## Two-tier cyber defence platform supporting transformer-based attack-defence RL agents in DDoS scenarios
 
 ## Install the required Python 3 modules:
